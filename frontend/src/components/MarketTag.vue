@@ -2,6 +2,7 @@
 // MarketTag.vue — 市场标签：A股 / 期货 / 港股 / 美股 / 加密。
 import { computed } from 'vue';
 import type { Market } from '@/api/types';
+import { venueLabel } from '@/utils/catalog';
 
 const props = defineProps<{ market: Market; venue?: string }>();
 const LABELS: Record<Market, string> = {
@@ -12,7 +13,7 @@ const label = computed(() => LABELS[props.market] ?? props.market);
 
 <template>
   <span class="market-tag">
-    {{ label }}<span v-if="venue" class="venue">· {{ venue }}</span>
+    {{ label }}<span v-if="venue" class="venue">· {{ venueLabel(venue) }}</span>
   </span>
 </template>
 

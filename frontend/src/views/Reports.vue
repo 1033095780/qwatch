@@ -2,7 +2,7 @@
 // Reports.vue — 日报：7 天列表 + 抽屉详情（摘要 + 策略明细）。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NDrawer, NDrawerContent, useMessage } from 'naive-ui';
-import { ChevronRight, FileText, RefreshCw } from 'lucide-vue-next';
+import { ChevronRight, FileText } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Report, ReportSummary } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -69,9 +69,9 @@ function copySummary(): void {
   const lines = [
     'qwatch 日报 ' + report.date,
     '总权益 ¥' + fmtMoney(report.total_equity) + ' · 当日盈亏 ' + fmtPct(report.today_pnl_pct) + '（¥' + fmtMoney(report.today_pnl) + '）',
-    '成交 ' + report.trades + ' 笔 · 告警 ' + report.alerts + ' 条',
+    '信号 ' + report.trades + ' 笔 · 告警 ' + report.alerts + ' 条',
     '— 策略明细 —',
-    ...report.strategies.map((s) => s.name + '：' + fmtPct(s.pct) + ' · 成交 ' + s.trades + ' 笔 · 回撤 ' + s.drawdown + '%'),
+    ...report.strategies.map((s) => s.name + '：' + fmtPct(s.pct) + ' · 信号 ' + s.trades + ' 笔 · 回撤 ' + s.drawdown + '%'),
   ].join('\n');
   navigator.clipboard.writeText(lines)
     .then(() => message.success('日报摘要已复制'))
@@ -88,10 +88,6 @@ onMounted(() => load(true));
     <PageHeader title="日报" :subtitle="'收盘复盘 · 最近 7 个交易日 · 生成时间按 Asia/Shanghai'">
       <template #extra>
         <span class="chip"><FileText :size="12" /> 每日 15:30 生成</span>
-        <n-button size="small" :loading="loading" @click="load()">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新
-        </n-button>
       </template>
     </PageHeader>
 
@@ -118,7 +114,7 @@ onMounted(() => load(true));
           <span class="faint">最近 7 个交易日累计</span>
         </div>
         <div class="card stat">
-          <span class="kpi-label">日均成交</span>
+          <span class="kpi-label">日均信号</span>
           <span class="stat-value num">{{ avgTrades }} 笔</span>
           <span class="faint">按日报口径统计</span>
         </div>
@@ -159,7 +155,7 @@ onMounted(() => load(true));
               <span class="v num">¥{{ fmtMoney(report.total_equity) }}</span>
             </div>
             <div class="counts">
-              <span class="chip">{{ report.trades }} 笔成交</span>
+              <span class="chip">{{ report.trades }} 笔信号</span>
               <span class="chip" :class="{ warn: report.alerts > 0 }">{{ report.alerts }} 条告警</span>
             </div>
             <ChevronRight :size="15" class="chev" />
@@ -189,7 +185,7 @@ onMounted(() => load(true));
               <span class="k">当日盈亏</span>
               <PnlText :value="detail.today_pnl" :pct="detail.today_pnl_pct" show-pct size="md" bold />
             </div>
-            <div class="dk"><span class="k">成交笔数</span><span class="v num">{{ detail.trades }}</span></div>
+            <div class="dk"><span class="k">信号笔数</span><span class="v num">{{ detail.trades }}</span></div>
             <div class="dk"><span class="k">告警</span><span class="v num">{{ detail.alerts }}</span></div>
           </div>
           <div class="drawer-actions">
@@ -200,7 +196,7 @@ onMounted(() => load(true));
           <div class="tbl-wrap">
             <table class="tbl tbl--compact">
               <thead>
-                <tr><th>策略</th><th class="th-num">盈亏</th><th class="th-num">收益率</th><th class="th-num">成交</th><th class="th-num">回撤</th></tr>
+                <tr><th>策略</th><th class="th-num">盈亏</th><th class="th-num">收益率</th><th class="th-num">信号</th><th class="th-num">回撤</th></tr>
               </thead>
               <tbody>
                 <tr v-for="s in detail.strategies" :key="s.runner_id">

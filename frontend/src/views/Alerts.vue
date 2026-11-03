@@ -1,8 +1,8 @@
 <script setup lang="ts">
 // Alerts.vue — 告警中心：活跃/历史 Tabs、级别/时间排序、确认与静默。
 import { computed, onMounted, ref, watch } from 'vue';
-import { NButton, useMessage } from 'naive-ui';
-import { BellOff, Check, RefreshCw } from 'lucide-vue-next';
+import { NButton, NDropdown, useMessage } from 'naive-ui';
+import { BellOff, Check } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -23,6 +23,12 @@ const error = ref('');
 const tab = ref('active');
 const sortBy = ref<'time' | 'severity'>('time');
 const busyId = ref('');
+
+const silenceOptions = [
+  { label: '静默 1 小时', key: '1h' },
+  { label: '静默 4 小时', key: '4h' },
+  { label: '静默 24 小时', key: '24h' },
+];
 
 const RULE_LABEL: Record<string, string> = {
   heartbeat_lost: '心跳丢失',
@@ -98,11 +104,12 @@ async function acknowledge(alert: Alert): Promise<void> {
   }
 }
 
-async function silence(alert: Alert): Promise<void> {
+async function silence(alert: Alert, duration = '1h'): Promise<void> {
   busyId.value = alert.id;
   try {
-    await api.silenceAlert(alert.id, '1h');
-    message.success('已静默 1 小时');
+    await api.silenceAlert(alert.id, duration);
+    const labels: Record<string, string> = { '1h': '1 小时', '4h': '4 小时', '24h': '24 小时' };
+    message.success('已静默 ' + (labels[duration] ?? '1 小时'));
     await load();
   } catch (err) {
     message.error(err instanceof Error ? err.message : '静默失败');
@@ -124,10 +131,6 @@ onMounted(() => load(true));
     >
       <template #extra>
         <span class="chip">确认 / 静默立即生效</span>
-        <n-button size="small" :loading="loading" @click="load()">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新
-        </n-button>
       </template>
     </PageHeader>
 
@@ -194,10 +197,12 @@ onMounted(() => load(true));
                 <template #icon><Check :size="12" /></template>
                 确认
               </n-button>
-              <n-button size="tiny" quaternary :loading="busyId === alert.id" @click="silence(alert)">
-                <template #icon><BellOff :size="12" /></template>
-                静默 1h
-              </n-button>
+              <n-dropdown trigger="click" :options="silenceOptions" @select="(key) => silence(alert, String(key))">
+                <n-button size="tiny" quaternary :loading="busyId === alert.id">
+                  <template #icon><BellOff :size="12" /></template>
+                  静默
+                </n-button>
+              </n-dropdown>
             </div>
           </div>
         </article>

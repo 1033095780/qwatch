@@ -64,7 +64,7 @@ async function submit(): Promise<void> {
             size="large"
             placeholder="输入访问密码"
             :show-password-on="'click'"
-            :input-props="{ autocomplete: 'current-password', 'aria-label': '访问密码' }"
+            :input-props="{ autocomplete: 'current-password', autofocus: true, 'aria-label': '访问密码' }"
             @keyup.enter="submit"
           >
             <template #prefix><LockKeyhole :size="15" /></template>

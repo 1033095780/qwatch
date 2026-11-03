@@ -3,9 +3,9 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton } from 'naive-ui';
-import { RefreshCw } from 'lucide-vue-next';
+import { ArrowUpRight } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { AccountDetail } from '@/api/types';
+import type { AccountDetail, Runner } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import { fmtDateTime, fmtMoney, fmtPct } from '@/utils/format';
@@ -17,6 +17,7 @@ import PageHeader from '@/components/PageHeader.vue';
 import PnlText from '@/components/PnlText.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SideTag from '@/components/SideTag.vue';
+import StatusDot from '@/components/StatusDot.vue';
 import SignalStatusTag from '@/components/SignalStatusTag.vue';
 
 const route = useRoute();
@@ -24,8 +25,13 @@ const settings = useSettingsStore();
 
 const accountId = computed(() => String(route.params.id || ''));
 const detail = ref<AccountDetail | null>(null);
+const runners = ref<Runner[]>([]);
 const loading = ref(true);
 const error = ref('');
+
+const relatedStrategies = computed(() =>
+  runners.value.filter((r) => r.accounts.some((a) => a.id === detail.value?.account.id)),
+);
 
 const positionValue = computed(() =>
   (detail.value?.positions ?? []).reduce((sum, p) => sum + Number(p.market_value), 0),
@@ -43,7 +49,9 @@ async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
   try {
-    detail.value = await api.account(accountId.value);
+    const [account, runnerRes] = await Promise.all([api.account(accountId.value), api.runners()]);
+    detail.value = account;
+    runners.value = runnerRes.items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '账户详情加载失败';
   } finally {
@@ -81,9 +89,9 @@ onMounted(() => load(true));
       >
         <template #extra>
           <MarketTag :market="detail.account.market" :venue="detail.account.venue" />
-          <n-button size="small" :loading="loading" @click="load()">
-            <template #icon><RefreshCw :size="13" /></template>
-            刷新
+          <n-button size="small" @click="$router.push('/signals?account_id=' + detail.account.id)">
+            <template #icon><ArrowUpRight :size="13" /></template>
+            查看信号
           </n-button>
         </template>
       </PageHeader>
@@ -115,6 +123,24 @@ onMounted(() => load(true));
           <span class="spacer" />
           <span class="muted mono">近 {{ detail.equity.length }} 个交易日</span>
         </div>
+      </SectionCard>
+
+      <SectionCard title="关联策略" :subtitle="relatedStrategies.length + ' 个策略使用该账户'">
+        <div v-if="relatedStrategies.length" class="related-list">
+          <router-link
+            v-for="runner in relatedStrategies"
+            :key="runner.id"
+            :to="'/strategies/' + runner.id"
+            class="related-item"
+          >
+            <StatusDot :status="runner.status" :size="6" />
+            <span class="related-name">{{ runner.name }}</span>
+            <span class="mono related-id">{{ runner.strategy }}</span>
+            <span class="chip">{{ runner.platform_label }}</span>
+            <span class="related-more">查看策略 →</span>
+          </router-link>
+        </div>
+        <EmptyState v-else compact title="暂无关联策略" description="策略 Runner 绑定该账户后会出现在这里" />
       </SectionCard>
 
       <div class="grid grid-main">
@@ -277,5 +303,42 @@ onMounted(() => load(true));
 .flow-time {
   font-size: 10px;
   color: var(--text-3);
+}
+.related-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.related-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 6px;
+  border-bottom: 1px solid rgba(30, 38, 55, 0.65);
+  color: var(--text);
+  border-radius: 6px;
+}
+.related-item:last-child {
+  border-bottom: none;
+}
+.related-item:hover {
+  background: rgba(21, 28, 44, 0.7);
+  color: var(--text);
+}
+.related-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+.related-id {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.related-more {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.related-item:hover .related-more {
+  color: var(--primary);
 }
 </style>

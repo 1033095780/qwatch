@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // TokenCreateModal.vue — 申请策略接入令牌：单步表单；创建成功后结果态只展示一次完整 token。
-import { reactive, ref, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui';
 import type { FormInst, FormRules } from 'naive-ui';
 import { AlertTriangle, Copy, KeyRound } from 'lucide-vue-next';
@@ -74,6 +74,17 @@ async function submit(): Promise<void> {
   }
 }
 
+const integrationExample = computed(() => {
+  if (!result.value) return '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8080';
+  return [
+    'curl -X POST ' + origin + '/api/v1/heartbeat \\',
+    '  -H "Authorization: Bearer ' + result.value.token + '" \\',
+    '  -H "Content-Type: application/json" \\',
+    "  -d '{\"runner_id\":\"" + result.value.record.name + "\",\"seq\":1,\"state\":\"running\",\"loop_count\":1}'",
+  ].join('\n');
+});
+
 async function copyToken(): Promise<void> {
   if (!result.value) return;
   try {
@@ -128,6 +139,9 @@ async function copyToken(): Promise<void> {
         <AlertTriangle :size="14" />
         <span>此令牌只显示一次，请立即保存。关闭弹窗后将无法再次查看，只能重新申请。</span>
       </div>
+      <p class="result-label">接入示例（心跳）</p>
+      <pre class="code-block mono">{{ integrationExample }}</pre>
+      <p class="code-note">信号批量上报：POST /api/v1/events，同样使用该 Bearer Token。</p>
     </template>
 
     <template #footer>
@@ -208,5 +222,22 @@ async function copyToken(): Promise<void> {
   .form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+.code-block {
+  margin: 6px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.code-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-3);
 }
 </style>

@@ -201,7 +201,7 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
             </span>
           </div>
           <span class="freshness num" title="数据新鲜度">{{ freshness }}</span>
-          <button class="icon-btn" type="button" aria-label="刷新" title="刷新当前页数据" @click="onRefresh">
+          <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
             <RefreshCw :size="16" :class="{ spinning: apiMeta.pending > 0 }" />
           </button>
           <button class="icon-btn bell" type="button" aria-label="告警中心" title="告警中心" @click="router.push('/alerts')">

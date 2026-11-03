@@ -10,6 +10,16 @@ export const STRATEGY_TYPE_LABELS: Record<StrategyType, string> = {
   multifactor: '多因子', market_making: '做市', other: '其他',
 };
 
+export const VENUE_LABELS: Record<string, string> = {
+  XSGE: '上期所', CFFEX: '中金所', XSHG: '上交所', XSHE: '深交所',
+  XHKG: '港交所', XNAS: '纳斯达克', XNYS: '纽交所', BINANCE: '币安', OKX: 'OKX', CTP: 'CTP',
+};
+
+export function venueLabel(venue?: string): string {
+  if (!venue) return '—';
+  return VENUE_LABELS[venue] || venue;
+}
+
 export const MARKET_LABELS: Record<Market, string> = {
   CN_A: 'A股', CN_FUT: '期货', FX: '外汇', CRYPTO: '加密', US: '美股', HK: '港股',
 };

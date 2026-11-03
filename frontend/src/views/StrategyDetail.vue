@@ -3,7 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, useMessage } from 'naive-ui';
-import { ArrowUpRight, Copy, RefreshCw } from 'lucide-vue-next';
+import { ArrowUpRight } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -121,17 +121,9 @@ onMounted(() => load(true));
           <span v-if="detail.runner.platform_label" class="chip">{{ detail.runner.platform_label }}</span>
           <span v-if="detail.runner.strategy_type_label" class="chip">{{ detail.runner.strategy_type_label }}</span>
           <span v-for="tag in detail.runner.tags" :key="tag" class="chip chip--soft">#{{ tag }}</span>
-          <n-button size="small" @click="copyId">
-            <template #icon><Copy :size="13" /></template>
-            复制标识
-          </n-button>
           <n-button size="small" tag="a" :href="'/signals?runner_id=' + detail.runner.id" @click.prevent="$router.push('/signals?runner_id=' + detail.runner.id)">
             <template #icon><ArrowUpRight :size="13" /></template>
             查看信号
-          </n-button>
-          <n-button size="small" :loading="refreshing" @click="load()">
-            <template #icon><RefreshCw :size="13" /></template>
-            刷新
           </n-button>
         </template>
       </PageHeader>

@@ -3,7 +3,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, NDatePicker, NInput, NSelect, useMessage } from 'naive-ui';
-import { ArrowDown, ArrowUp, Download, FilterX, RefreshCw, Search } from 'lucide-vue-next';
+import { ArrowDown, ArrowUp, Download, FilterX, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Account, Runner, Signal, SignalStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -231,10 +231,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
           <template #icon><Download :size="14" /></template>
           导出 CSV
         </n-button>
-        <n-button size="small" :loading="loading" @click="load">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新
-        </n-button>
       </template>
     </PageHeader>
 
@@ -302,7 +298,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
           <tbody>
             <tr v-for="signal in pageRows" :key="signal.id" :class="{ 'row-ignored': signal.status === 'ignored' }">
               <td class="mono nowrap" :title="signal.ts">{{ fmtDateTime(signal.ts) }}</td>
-              <td class="truncate cell-strong">{{ signal.runner_name }}</td>
+              <td class="truncate cell-strong"><router-link :to="'/strategies/' + signal.runner_id" class="cell-link">{{ signal.runner_name }}</router-link></td>
               <td class="muted nowrap">{{ signal.platform_label || '—' }}</td>
               <td class="muted nowrap">{{ signal.market_label }}</td>
               <td>
@@ -315,7 +311,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <td class="td-num">{{ signal.qty }}</td>
               <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
               <td><SignalStatusTag :status="signal.status" /></td>
-              <td class="truncate muted">{{ signal.account_name }}</td>
+              <td class="truncate muted"><router-link :to="'/accounts/' + signal.account_id" class="cell-link muted">{{ signal.account_name }}</router-link></td>
             </tr>
           </tbody>
         </table>
@@ -409,6 +405,12 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
   font-size: 10px;
   color: var(--text-3);
   line-height: 1.2;
+}
+.cell-link {
+  color: var(--text);
+}
+.cell-link:hover {
+  color: var(--primary);
 }
 .row-ignored td {
   opacity: 0.62;

@@ -5,7 +5,7 @@ import {
   NButton, NSwitch, NTooltip, useDialog, useMessage,
 } from 'naive-ui';
 import {
-  Ban, BellRing, Copy, Pencil, Plus, RefreshCw, Send, ShieldCheck,
+  Ban, BellRing, Copy, Pencil, Plus, Send, ShieldCheck,
 } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Channel, StrategyToken, TestChannelResult, UpColorScheme } from '@/api/types';
@@ -147,10 +147,6 @@ onMounted(() => {
     <PageHeader title="设置" subtitle="通知渠道 / 策略令牌 / 交易日历 / 安全">
       <template #extra>
         <span class="chip"><StatusDot status="running" :size="6" /> 服务正常</span>
-        <n-button size="small" :loading="store.loading" @click="store.load(true)">
-          <template #icon><RefreshCw :size="14" /></template>
-          重新读取
-        </n-button>
       </template>
     </PageHeader>
 

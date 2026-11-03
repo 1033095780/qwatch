@@ -2,7 +2,7 @@
 // Strategies.vue — 策略列表：搜索 + 状态/市场/平台/类型/标签/账户筛选 + 卡片网格 + 空状态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
-import { RefreshCw, Search, SlidersHorizontal } from 'lucide-vue-next';
+import { Search, SlidersHorizontal } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Account, Runner, RunnerStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -109,12 +109,6 @@ onMounted(() => load(true));
 <template>
   <div class="page">
     <PageHeader title="策略" :subtitle="'运行实例与状态 · 共 ' + runners.length + ' 个 · 告警与心跳按交易日历判定'">
-      <template #extra>
-        <n-button size="small" :loading="loading" @click="load()">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新
-        </n-button>
-      </template>
     </PageHeader>
 
     <section class="card toolbar">
