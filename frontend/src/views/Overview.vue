@@ -1,10 +1,10 @@
 <script setup lang="ts">
 // Overview.vue — 总览：KPI 四卡、组合净值/回撤、组合指标、策略状态、最新信号、告警动态。
-import { computed, onMounted, ref, watch } from 'vue';
-import { NButton, useMessage } from 'naive-ui';
-import { Activity, ArrowRight, Bell, ChevronDown, ChevronRight, ChevronUp, Wallet } from 'lucide-vue-next';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { NButton } from 'naive-ui';
+import { Activity, Bell, ChevronDown, ChevronRight, ChevronUp, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Overview, RangeKey, RunnerDetail } from '@/api/types';
+import type { Overview, RangeKey, RunnerDetail, Signal } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtDateTime, fmtMoney, fmtPct, fromNow, pnlClass } from '@/utils/format';
 import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
@@ -21,7 +21,6 @@ import SideTag from '@/components/SideTag.vue';
 import StatusDot from '@/components/StatusDot.vue';
 
 const settings = useSettingsStore();
-const message = useMessage();
 
 const data = ref<Overview | null>(null);
 const loading = ref(true);
@@ -32,6 +31,14 @@ const scope = ref<string>('portfolio');
 const metricsOpen = ref(true);
 const runnerDetail = ref<RunnerDetail | null>(null);
 const scopeLoading = ref(false);
+const showDrawdown = ref(localStorage.getItem('qwatch.overview.drawdown') !== '0');
+const latestSignal = ref<Signal | null>(null);
+const bannerVisible = ref(false);
+const flashSignalId = ref('');
+let lastSignalId = '';
+let pollTimer: number | undefined;
+let flashTimer: number | undefined;
+let bannerTimer: number | undefined;
 
 const isPortfolio = computed(() => scope.value === 'portfolio');
 const activeRunner = computed(() => (isPortfolio.value ? null : data.value?.runners.find((r) => r.id === scope.value) ?? null));
@@ -62,9 +69,6 @@ const currentMetrics = computed(() => (isPortfolio.value ? data.value?.metrics ?
 const drawdownPoints = computed(() =>
   isPortfolio.value ? data.value?.drawdown_curve ?? [] : runnerDetail.value?.drawdown ?? [],
 );
-const metricsSubtitle = computed(() =>
-  isPortfolio.value ? '全部策略合并 · 当前净值区间口径' : (activeRunner.value?.name || '策略') + ' · 策略口径',
-);
 const metricItems = computed(() => {
   const metrics = currentMetrics.value;
   if (!metrics) return [];
@@ -90,26 +94,60 @@ async function loadRunner(): Promise<void> {
   }
 }
 
-async function load(initial = false): Promise<void> {
+function clearSignalTimers(): void {
+  window.clearTimeout(flashTimer);
+  window.clearTimeout(bannerTimer);
+}
+
+function detectNewSignal(next: Overview): void {
+  const latest = next.recent_signals[0];
+  if (!latest) return;
+  if (!lastSignalId) {
+    lastSignalId = latest.id;
+    return;
+  }
+  if (latest.id === lastSignalId) return;
+  lastSignalId = latest.id;
+  latestSignal.value = latest;
+  flashSignalId.value = latest.id;
+  bannerVisible.value = true;
+  clearSignalTimers();
+  flashTimer = window.setTimeout(() => { flashSignalId.value = ''; }, 10000);
+  bannerTimer = window.setTimeout(() => { bannerVisible.value = false; }, 10000);
+}
+
+function focusLatestSignal(): void {
+  const signal = latestSignal.value;
+  if (!signal) return;
+  bannerVisible.value = false;
+  const target = document.getElementById('latest-signal-' + signal.id);
+  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  (target as HTMLElement | null)?.focus({ preventScroll: true });
+}
+
+function toggleDrawdown(): void {
+  showDrawdown.value = !showDrawdown.value;
+  localStorage.setItem('qwatch.overview.drawdown', showDrawdown.value ? '1' : '0');
+}
+
+async function load(initial = false, silent = false): Promise<void> {
   if (initial) loading.value = true;
-  else refreshing.value = true;
+  else if (!silent) refreshing.value = true;
   error.value = '';
   try {
-    data.value = await api.overview(range.value);
+    const next = await api.overview(range.value);
+    data.value = next;
+    detectNewSignal(next);
   } catch (err) {
     error.value = err instanceof Error ? err.message : '总览加载失败';
   } finally {
     loading.value = false;
-    refreshing.value = false;
+    if (!silent) refreshing.value = false;
   }
 }
 
 function retry(): void {
   load(true);
-}
-
-function viewAllAlerts(): void {
-  message.info('告警中心已列出全部告警');
 }
 
 watch(range, () => (isPortfolio.value ? load() : loadRunner()));
@@ -118,7 +156,17 @@ watch(scope, (value) => {
 });
 watch(() => settings.refreshSeq, () => load());
 
-onMounted(() => load(true));
+onMounted(() => {
+  load(true);
+  pollTimer = window.setInterval(() => {
+    if (!document.hidden) load(false, true);
+  }, 5000);
+});
+
+onBeforeUnmount(() => {
+  window.clearInterval(pollTimer);
+  clearSignalTimers();
+});
 </script>
 
 <template>
@@ -128,6 +176,25 @@ onMounted(() => load(true));
         <span class="chip mono">Asia/Shanghai</span>
       </template>
     </PageHeader>
+
+    <div
+      v-if="bannerVisible && latestSignal"
+      class="signal-banner"
+      role="button"
+      tabindex="0"
+      @click="focusLatestSignal"
+      @keydown.enter="focusLatestSignal"
+    >
+      <span class="banner-pulse" />
+      <strong>最新信号</strong>
+      <span class="banner-sep">·</span>
+      <span>{{ latestSignal.runner_name }}</span>
+      <span class="banner-sep">·</span>
+      <span class="mono">{{ latestSignal.instrument }}</span>
+      <span>{{ SIGNAL_ACTION_LABELS[latestSignal.action] }}</span>
+      <span class="banner-spacer" />
+      <span class="banner-action">点击定位</span>
+    </div>
 
     <div v-if="loading && !data" class="page">
       <div class="grid grid-kpi">
@@ -156,11 +223,7 @@ onMounted(() => load(true));
       </div>
 
       <section class="card overview-board">
-        <div class="board-head">
-          <div class="board-title-wrap">
-            <h2 class="board-title">组合概览</h2>
-            <p class="board-sub">{{ metricsSubtitle }}</p>
-          </div>
+        <div class="board-head board-head--compact">
           <button type="button" class="board-toggle" @click="metricsOpen = !metricsOpen">
             <span>{{ metricsOpen ? '收起指标' : '展开指标' }}</span>
             <ChevronUp v-if="metricsOpen" :size="14" />
@@ -233,28 +296,24 @@ onMounted(() => load(true));
       </section>
 
       <div class="grid grid-main">
-        <SectionCard
-          :title="isPortfolio ? '组合净值' : activeRunner?.name || '策略净值'"
-          :subtitle="isPortfolio ? '全部策略合并 · 策略归因口径' : (activeRunner?.description || MARKET_LABELS[activeRunner?.market || 'CN_A']) + ' · 策略归因口径'"
-        >
+        <SectionCard :title="isPortfolio ? '组合净值' : activeRunner?.name || '策略净值'">
           <template #extra>
+            <div class="scope-switch">
+              <button type="button" class="scope-item" :class="{ active: isPortfolio }" @click="scope = 'portfolio'">组合</button>
+              <button
+                v-for="runner in data.runners"
+                :key="runner.id"
+                type="button"
+                class="scope-item"
+                :class="{ active: scope === runner.id }"
+                @click="scope = runner.id"
+              >
+                <StatusDot :status="runner.status" :size="6" />
+                {{ runner.name }}
+              </button>
+            </div>
             <RangeTabs v-model="range" />
           </template>
-
-          <div class="scope-switch">
-            <button type="button" class="scope-item" :class="{ active: isPortfolio }" @click="scope = 'portfolio'">组合</button>
-            <button
-              v-for="runner in data.runners"
-              :key="runner.id"
-              type="button"
-              class="scope-item"
-              :class="{ active: scope === runner.id }"
-              @click="scope = runner.id"
-            >
-              <StatusDot :status="runner.status" :size="6" />
-              {{ runner.name }}
-            </button>
-          </div>
 
           <div class="chart-wrap" :class="{ refreshing: refreshing || scopeLoading }">
             <EquityChart
@@ -271,14 +330,21 @@ onMounted(() => load(true));
               <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
               <span class="spacer" />
               <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>
+              <button type="button" class="dd-toggle" @click="toggleDrawdown">
+                {{ showDrawdown ? '隐藏回撤' : '显示回撤' }}
+                <ChevronUp v-if="showDrawdown" :size="12" />
+                <ChevronDown v-else :size="12" />
+              </button>
             </div>
-            <div class="dd-head">
-              <span class="eyebrow">回撤</span>
-              <span class="muted">{{ isPortfolio ? '组合峰值回落' : '策略峰值回落' }}</span>
-              <span class="spacer" />
-              <span class="muted mono">{{ drawdownPoints.length }} 点</span>
-            </div>
-            <DrawdownChart :data="drawdownPoints" :height="132" />
+            <template v-if="showDrawdown">
+              <div class="dd-head">
+                <span class="eyebrow">回撤</span>
+                <span class="muted">{{ isPortfolio ? '组合峰值回落' : '策略峰值回落' }}</span>
+                <span class="spacer" />
+                <span class="muted mono">{{ drawdownPoints.length }} 点</span>
+              </div>
+              <DrawdownChart :data="drawdownPoints" :height="132" />
+            </template>
           </div>
         </SectionCard>
 
@@ -329,7 +395,13 @@ onMounted(() => load(true));
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="signal in data.recent_signals" :key="signal.id">
+                <tr
+                  v-for="signal in data.recent_signals"
+                  :key="signal.id"
+                  :id="'latest-signal-' + signal.id"
+                  tabindex="-1"
+                  :class="{ 'signal-flash': signal.id === flashSignalId }"
+                >
                   <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
                   <td class="truncate">{{ signal.runner_name }}</td>
                   <td>
@@ -372,9 +444,6 @@ onMounted(() => load(true));
             </button>
           </div>
           <EmptyState v-else compact title="没有活跃告警" description="所有策略心跳正常" />
-          <router-link to="/alerts" class="alert-all">
-            查看全部告警 <ArrowRight :size="13" />
-          </router-link>
         </SectionCard>
       </div>
     </template>
@@ -385,9 +454,9 @@ onMounted(() => load(true));
 .scope-switch {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin: -2px 0 10px;
-  padding-bottom: 2px;
+  gap: 5px;
+  margin: 0;
+  max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -477,26 +546,90 @@ onMounted(() => load(true));
 .dd-head .spacer {
   flex: 1;
 }
+.dd-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.dd-toggle:hover {
+  color: var(--primary);
+}
+.signal-flash {
+  animation: signal-flash 1.3s ease-in-out infinite;
+}
+@keyframes signal-flash {
+  0%, 100% { background: rgba(91, 140, 255, 0.04); }
+  50% { background: rgba(91, 140, 255, 0.16); }
+}
+.signal-banner {
+  position: fixed;
+  z-index: 90;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 9px 14px;
+  border: 1px solid rgba(91, 140, 255, 0.4);
+  border-radius: 9px;
+  background: rgba(21, 28, 44, 0.96);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  animation: banner-in 180ms ease-out;
+}
+.signal-banner strong {
+  color: var(--primary);
+  font-weight: 600;
+}
+.banner-sep {
+  color: var(--text-3);
+}
+.banner-pulse {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: banner-pulse 1.2s ease-in-out infinite;
+}
+.banner-spacer {
+  flex: 1;
+}
+.banner-action {
+  color: var(--primary);
+  white-space: nowrap;
+}
+@keyframes banner-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes banner-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.1); }
+  50% { box-shadow: 0 0 0 7px rgba(91, 140, 255, 0.02); }
+}
 .overview-board {
-  padding: 18px 20px 16px;
+  padding: 14px 20px 14px;
 }
 .board-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
-.board-title {
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.01em;
-}
-.board-sub {
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--text-2);
+.board-head--compact {
+  justify-content: flex-end;
+  margin-bottom: 6px;
 }
 .board-toggle {
   display: inline-flex;
@@ -724,19 +857,6 @@ onMounted(() => load(true));
 }
 .dot-sep {
   opacity: 0.6;
-}
-.alert-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-2);
-}
-.alert-all:hover {
-  color: var(--primary);
 }
 @media (max-width: 1279px) {
   .board-kpis {
