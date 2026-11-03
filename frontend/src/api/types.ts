@@ -229,29 +229,6 @@ export interface AlertsResponse {
   active_count: number;
 }
 
-export interface ReportSummary {
-  date: string;
-  total_equity: string;
-  today_pnl: string;
-  today_pnl_pct: string;
-  trades: number;
-  alerts: number;
-  status: 'ok' | 'warn';
-}
-
-export interface ReportStrategy {
-  runner_id: string;
-  name: string;
-  pnl: string;
-  pct: string;
-  trades: number;
-  drawdown: string;
-}
-
-export interface Report extends ReportSummary {
-  strategies: ReportStrategy[];
-}
-
 export interface Channel {
   id: string;
   name: string;

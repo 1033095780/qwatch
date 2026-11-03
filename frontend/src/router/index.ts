@@ -38,7 +38,7 @@ const router = createRouter({
         { path: 'signals', name: 'signals', component: () => import('@/views/Signals.vue'), meta: { title: '交易信号' } },
         { path: 'trades', redirect: (to) => ({ path: '/signals', query: to.query }) },
         { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警中心' } },
-        { path: 'reports', name: 'reports', component: () => import('@/views/Reports.vue'), meta: { title: '日报' } },
+        { path: 'reports', redirect: '/overview' },
         { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
       ],
     },

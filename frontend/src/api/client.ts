@@ -2,7 +2,7 @@
 import { reactive } from 'vue';
 import type {
   Account, Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
-  LoginResponse, Report, ReportSummary, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
+  LoginResponse, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
   SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
   ListResponse,
 } from './types';
@@ -145,12 +145,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ duration }),
     });
-  },
-  reports() {
-    return request<ListResponse<ReportSummary>>('/reports');
-  },
-  report(date: string) {
-    return request<Report>('/reports/' + encodeURIComponent(date));
   },
   settings() {
     return request<SettingsData>('/settings');
