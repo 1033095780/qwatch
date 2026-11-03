@@ -974,6 +974,37 @@ export function testChannel(id) {
   };
 }
 
+// ---------- Watchdog：60s 无心跳判离线 ----------
+const HEARTBEAT_TIMEOUT_MS = 60 * 1000;
+
+export function runWatchdog() {
+  const now = Date.now();
+  for (const def of RUNNER_DEFS) {
+    if (!def.last_heartbeat_at || def.status === 'offline') continue;
+    const ts = Date.parse(def.last_heartbeat_at);
+    if (!Number.isFinite(ts) || now - ts <= HEARTBEAT_TIMEOUT_MS) continue;
+    def.status = 'offline';
+    const existing = alerts.find((a) => a.runner_id === def.id && a.rule === 'heartbeat_lost' && a.status === 'firing');
+    if (!existing) {
+      alerts.unshift({
+        id: 'alert_' + randomBytes(4).toString('hex'),
+        fingerprint: 'fp_' + randomBytes(4).toString('hex'),
+        rule: 'heartbeat_lost',
+        severity: 'P0',
+        status: 'firing',
+        runner_id: def.id,
+        runner_name: def.name,
+        summary: '策略心跳丢失：' + def.name + ' 已 ' + Math.round((now - ts) / 1000) + ' 秒未上报（阈值 60 秒）',
+        starts_at: ISO(now),
+        ends_at: undefined,
+        acked_at: undefined,
+        labels: { host: 'runner', timeout_s: '60' },
+        updated_at: ISO(now),
+      });
+    }
+  }
+}
+
 // ---------- 被动接收：POST /api/v1/report ----------
 const REPORT_DIRECTIONS = ['long', 'short'];
 const REPORT_ACTIONS = ['open', 'close', 'add', 'reduce'];

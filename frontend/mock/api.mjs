@@ -3,7 +3,7 @@ import {
   getOverview, getRunners, getRunnerDetail, createRunner, getAccounts, getAccountDetail,
   getSignals, getPositions, getAlerts, acknowledgeAlert, silenceAlert,
   getReports, getReport, getSettings, saveSettings, testChannel,
-  getTokens, createToken, revokeToken, ingestReport, mockMeta,
+  getTokens, createToken, revokeToken, ingestReport, runWatchdog, mockMeta,
 } from './data.mjs';
 
 export const MOCK_TOKEN = 'mock-token';
@@ -41,6 +41,7 @@ export async function handleApi(req, res) {
   const query = Object.fromEntries(url.searchParams.entries());
 
   try {
+    runWatchdog();
     if (method === 'GET' && route === '/healthz') {
       send(res, 200, { ok: true, service: 'qwatch-mock', version: '0.1.0', mock: mockMeta });
       return true;
