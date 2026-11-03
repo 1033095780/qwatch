@@ -199,6 +199,62 @@ def net_cash_flow(conn: sqlite3.Connection, runner_id: str) -> float:
     return float(row["amount"] or 0)
 
 
+def capital_summary(conn: sqlite3.Connection, runner_id: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+    if not row:
+        return None
+    initial = float(row["initial_equity"] or 0)
+    if initial <= 0:
+        first = conn.execute(
+            "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (runner_id,)
+        ).fetchone()
+        initial = float(first["equity"]) if first else 0.0
+    flows = conn.execute(
+        "SELECT id, ts, amount, note, kind FROM cash_flows WHERE runner_id = ? ORDER BY ts, id", (runner_id,)
+    ).fetchall()
+    net = sum(float(item["amount"]) for item in flows)
+    total_pnl = float(row["equity"]) - initial - net if initial > 0 else 0.0
+    return {
+        "initial_equity": f"{initial:.2f}",
+        "net_flows": f"{net:.2f}",
+        "total_pnl": f"{total_pnl:.2f}",
+        "today_pnl": f"{float(row['today_pnl']):.2f}",
+        "flows": [
+            {
+                "id": item["id"], "ts": item["ts"], "amount": f"{float(item['amount']):.2f}",
+                "kind": item["kind"], "note": item["note"],
+            }
+            for item in flows
+        ],
+    }
+
+
+def refresh_runner_today_pnl(conn: sqlite3.Connection, runner_id: str) -> None:
+    row = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+    if not row:
+        return
+    equity = float(row["equity"])
+    now = now_dt()
+    local_midnight = now.astimezone(CST).replace(hour=0, minute=0, second=0, microsecond=0)
+    day_start = local_midnight.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    prior = conn.execute(
+        "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+        (runner_id, day_start),
+    ).fetchone()
+    day_flow = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ?",
+        (runner_id, day_start),
+    ).fetchone()["amount"]
+    initial = float(row["initial_equity"] or 0)
+    if initial <= 0:
+        first = conn.execute(
+            "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (runner_id,)
+        ).fetchone()
+        initial = float(first["equity"]) if first else equity
+    today_pnl = (equity - float(prior["equity"]) - float(day_flow or 0)) if prior else (equity - initial - float(day_flow or 0))
+    conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner_id))
+
+
 def sparkline_of(conn: sqlite3.Connection, runner_id: str) -> list[float]:
     rows = conn.execute("SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 24", (runner_id,)).fetchall()
     values = [round(float(row["equity"]), 2) for row in reversed(rows)]
@@ -660,6 +716,66 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         }
 
 
+@app.get("/api/v1/runners/{runner_id}/capital")
+def get_capital(runner_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    with connect() as conn:
+        summary = capital_summary(conn, runner_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="策略不存在")
+        return summary
+
+
+@app.post("/api/v1/runners/{runner_id}/capital-flows")
+def add_capital_flow(
+    runner_id: str, payload: dict[str, Any] = Body(default={}), user: str = Depends(require_user)
+) -> dict[str, Any]:
+    amount = require_number(payload.get("amount"), "amount")
+    if abs(amount) < 0.01:
+        raise HTTPException(status_code=400, detail="金额不能为 0")
+    ts = parse_iso(str(payload["ts"])) if payload.get("ts") else iso_now()
+    event_dt = dt_from(ts)
+    if event_dt and event_dt > now_dt() + timedelta(minutes=5):
+        raise HTTPException(status_code=400, detail="资金变动时间不能超过当前时间 5 分钟")
+    note = str(payload.get("note") or "").strip()[:100]
+    with connect() as conn:
+        if not conn.execute("SELECT 1 FROM runners WHERE id = ?", (runner_id,)).fetchone():
+            raise HTTPException(status_code=404, detail="策略不存在")
+        conn.execute(
+            "INSERT INTO cash_flows(runner_id, ts, amount, note, kind) VALUES(?,?,?,?,?)",
+            (runner_id, ts, amount, note, "flow"),
+        )
+        refresh_runner_today_pnl(conn, runner_id)
+        return capital_summary(conn, runner_id) or {}
+
+
+@app.post("/api/v1/runners/{runner_id}/capital-reset")
+def reset_capital_baseline(runner_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    with connect() as conn:
+        summary = capital_summary(conn, runner_id)
+        if summary is None:
+            raise HTTPException(status_code=404, detail="策略不存在")
+        current_pnl = float(summary["total_pnl"])
+        if abs(current_pnl) >= 0.01:
+            conn.execute(
+                "INSERT INTO cash_flows(runner_id, ts, amount, note, kind) VALUES(?,?,?,?,?)",
+                (runner_id, iso_now(), current_pnl, "基准重置", "reset"),
+            )
+        return capital_summary(conn, runner_id) or {}
+
+
+@app.delete("/api/v1/runners/{runner_id}/capital-flows/{flow_id}")
+def delete_capital_flow(runner_id: str, flow_id: int, user: str = Depends(require_user)) -> dict[str, Any]:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM cash_flows WHERE id = ? AND runner_id = ?", (flow_id, runner_id)
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="资金记录不存在")
+        conn.execute("DELETE FROM cash_flows WHERE id = ?", (flow_id,))
+        refresh_runner_today_pnl(conn, runner_id)
+        return capital_summary(conn, runner_id) or {}
+
+
 @app.get("/api/v1/overview")
 def overview(range_key: str = Query(default="all", alias="range"), user: str = Depends(require_user)) -> dict[str, Any]:
     days = RANGE_DAYS.get(range_key, 100000)
@@ -931,6 +1047,8 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
             (now, now, runner["id"]),
         )
+        if "cash_flow" in payload:
+            raise HTTPException(status_code=400, detail="cash_flow 已废弃，请在 qwatch 策略详情里手工记录资金变动")
         signal_keys = ("symbol", "direction", "action", "qty", "price", "amount")
         has_signal = any(key in payload and payload[key] not in (None, "") for key in signal_keys)
         requested_id = str(payload.get("id") or "").strip()
@@ -942,19 +1060,9 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                 return {"ok": True, "heartbeat": True, "signal_id": requested_id, "server_time": now}
         if payload.get("msg"):
             conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (str(payload["msg"])[:200], runner["id"]))
-        cash_flow_value: float | None = None
-        if "cash_flow" in payload and payload["cash_flow"] is not None:
-            cash_flow_value = require_number(payload["cash_flow"], "cash_flow")
-            if "equity" not in payload or payload["equity"] is None:
-                raise HTTPException(status_code=400, detail="cash_flow 必须和新的 equity 一起上报")
         equity_value: float | None = None
         if "equity" in payload and payload["equity"] is not None:
             equity_value = require_number(payload["equity"], "equity", minimum=0)
-        if cash_flow_value is not None and abs(cash_flow_value) > 1e-9:
-            conn.execute(
-                "INSERT INTO cash_flows(runner_id, ts, amount, note) VALUES(?,?,?,?)",
-                (runner["id"], event_ts, cash_flow_value, "external"),
-            )
         if equity_value is not None:
             equity = equity_value
             latest_point = conn.execute(
@@ -968,7 +1076,7 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                     "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
                     (runner["id"],),
                 ).fetchone()
-                baseline = float(first_point["equity"]) if first_point else (equity - (cash_flow_value or 0))
+                baseline = float(first_point["equity"]) if first_point else equity
                 conn.execute("UPDATE runners SET initial_equity = ? WHERE id = ?", (baseline, runner["id"]))
             event_dt_parsed = dt_from(event_ts) or now_dt()
             local_midnight = event_dt_parsed.astimezone(CST).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -978,7 +1086,7 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                 (runner["id"], day_start),
             ).fetchone()
             day_flow = conn.execute(
-                "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts >= ? AND ts <= ?",
+                "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ? AND ts <= ?",
                 (runner["id"], day_start, event_ts),
             ).fetchone()["amount"]
             if prior:

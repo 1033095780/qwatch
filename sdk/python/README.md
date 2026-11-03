@@ -17,7 +17,7 @@ from qwatch import Qwatch
 q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", 30)  # 初始化即自动心跳
 q.signal("rb2601", "long", "open", 10, price=3521, msg="突破前高")
 q.tick()          # 主循环每轮调用一次，服务端据此判断卡死
-q.equity(462300.12)          # 出入金时：q.equity(552300.12, cash_flow=100000)
+q.equity(462300.12)
 q.close()
 ~~~
 
@@ -30,7 +30,7 @@ token 在 qwatch 后台「新建策略」时生成，一个策略一个 token。
 - tick() 只更新内存里的 loop，不发请求；下一次自动心跳会带上，服务端发现 loop 不增长会判「卡死」。
 - 网络失败进内存队列重试，不阻塞策略；参数错误立刻 ValueError。
 - token 错误抛 AuthError。
-- 出入金：把「新权益」和「外部现金流」一起上报，入金为正、出金为负；服务端计算累计盈亏时会自动剔除这部分，避免把入金当成盈利。
+- 出入金是用户手工操作，不在 SDK 里上报；请到 qwatch 策略详情的「资金变动」里记录（初始资金自动取第一次权益快照），系统会自动修正累计盈亏。
 
 ## API
 
@@ -38,10 +38,10 @@ token 在 qwatch 后台「新建策略」时生成，一个策略一个 token。
 Qwatch(base_url, token, heartbeat=30, timeout=5, queue_size=1000)
 
 q.signal(symbol, direction, action, qty, *, price=None, amount=None,
-         account=None, equity=None, cash_flow=None, msg=None, id=None) -> signal_id
+         account=None, equity=None, msg=None, id=None) -> signal_id
 q.heartbeat(*, loop=None, last_tick=None, equity=None, msg=None)
 q.tick(last_tick=None) -> loop
-q.equity(value, cash_flow=0, msg=None)   # cash_flow：入金正 / 出金负
+q.equity(value, msg=None)
 q.msg(text)
 q.stats
 q.close()

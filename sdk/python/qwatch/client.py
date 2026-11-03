@@ -101,7 +101,6 @@ class Qwatch:
         amount: Optional[float] = None,
         account: Optional[str] = None,
         equity: Optional[float] = None,
-        cash_flow: Optional[float] = None,
         msg: Optional[str] = None,
         id: Optional[str] = None,
     ) -> str:
@@ -138,8 +137,6 @@ class Qwatch:
             payload["account"] = str(account).strip()
         if equity is not None:
             payload["equity"] = self._number(equity, "equity")
-        if cash_flow is not None:
-            payload["cash_flow"] = self._number(cash_flow, "cash_flow")
         if msg:
             payload["msg"] = str(msg).strip()[:200]
         payload["id"] = str(id).strip() if id else "sig_" + uuid.uuid4().hex
@@ -182,11 +179,9 @@ class Qwatch:
                 self._last_tick = str(last_tick)
             return self._loop
 
-    def equity(self, value: float, cash_flow: float = 0.0, msg: Optional[str] = None) -> None:
-        """更新权益（也算一次心跳）；有出入金时把金额一起带上（入金正、出金负）。"""
+    def equity(self, value: float, msg: Optional[str] = None) -> None:
+        """只更新权益（也算一次心跳）。出入金请在 qwatch 策略详情里手工记录。"""
         payload: Dict[str, Any] = {"ts": _now_iso(), "equity": self._number(value, "equity")}
-        if cash_flow:
-            payload["cash_flow"] = self._number(cash_flow, "cash_flow")
         if msg:
             payload["msg"] = str(msg).strip()[:200]
         self._enqueue(payload)

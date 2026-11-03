@@ -291,6 +291,22 @@ export interface TokenCreateRequest {
   note?: string;
 }
 
+export interface CapitalFlow {
+  id: number;
+  ts: string;
+  amount: string;
+  kind: 'flow' | 'reset';
+  note: string;
+}
+
+export interface CapitalSummary {
+  initial_equity: string;
+  net_flows: string;
+  total_pnl: string;
+  today_pnl: string;
+  flows: CapitalFlow[];
+}
+
 export interface TokenCreateResult {
   token: string;
   record: StrategyToken;

@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS cash_flows (
   runner_id TEXT NOT NULL,
   ts TEXT NOT NULL,
   amount REAL NOT NULL,
-  note TEXT NOT NULL DEFAULT ''
+  note TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'flow'
 );
 CREATE INDEX IF NOT EXISTS idx_cash_flows_runner_ts ON cash_flows(runner_id, ts);
 CREATE TABLE IF NOT EXISTS tokens (
@@ -177,6 +178,9 @@ def init_db() -> None:
             conn.execute("ALTER TABLE runners ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         if "demo" not in columns:
             conn.execute("ALTER TABLE runners ADD COLUMN demo INTEGER NOT NULL DEFAULT 0")
+        flow_columns = [row["name"] for row in conn.execute("PRAGMA table_info(cash_flows)").fetchall()]
+        if "kind" not in flow_columns:
+            conn.execute("ALTER TABLE cash_flows ADD COLUMN kind TEXT NOT NULL DEFAULT 'flow'")
 
 
 def loads(value: str | None, default: Any) -> Any:

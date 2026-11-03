@@ -3,7 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton } from 'naive-ui';
-import { ArrowUpRight, KeyRound } from 'lucide-vue-next';
+import { ArrowUpRight, KeyRound, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -21,6 +21,7 @@ import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import SideTag from '@/components/SideTag.vue';
+import CapitalFlowModal from '@/components/CapitalFlowModal.vue';
 import StrategyTokenModal from '@/components/StrategyTokenModal.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import MarketTag from '@/components/MarketTag.vue';
@@ -38,6 +39,7 @@ const error = ref('');
 const range = ref<RangeKey>('all');
 const activeTab = ref('equity');
 const tokenOpen = ref(false);
+const capitalOpen = ref(false);
 
 const signedMoney = (value: string): string => {
   const number = Number(value);
@@ -120,6 +122,10 @@ onMounted(() => load(true));
           <n-button size="small" @click="tokenOpen = true">
             <template #icon><KeyRound :size="13" /></template>
             接入令牌
+          </n-button>
+          <n-button size="small" @click="capitalOpen = true">
+            <template #icon><Wallet :size="13" /></template>
+            资金变动
           </n-button>
           <n-button size="small" tag="a" :href="'/signals?runner_id=' + detail.runner.id" @click.prevent="$router.push('/signals?runner_id=' + detail.runner.id)">
             <template #icon><ArrowUpRight :size="13" /></template>
@@ -309,6 +315,7 @@ onMounted(() => load(true));
       </section>
 
       <StrategyTokenModal v-model:show="tokenOpen" :runner="detail.runner" />
+      <CapitalFlowModal v-model:show="capitalOpen" :runner="detail.runner" @changed="load()" />
     </template>
   </div>
 </template>
