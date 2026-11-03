@@ -159,7 +159,7 @@ def seed() -> None:
             ("alert_heartbeat_cu", "heartbeat_lost", "P0", "firing", "cta_cu-breakout",
              "策略心跳丢失：沪铜突破已 5 分钟未上报（阈值 60 秒）", now - timedelta(minutes=5), None, None),
             ("alert_drawdown_ag", "drawdown_breach", "P1", "firing", "cta_ag-swing",
-             "回撤超阈值：白银波段当前回撤 -9.35%，阈值 -8.00%", now - timedelta(minutes=72), None, None),
+             "回撤超阈值：白银波段当前回撤 -7.35%，阈值 -6.00%", now - timedelta(minutes=72), None, None),
             ("alert_stalled_if", "runner_stalled", "P1", "resolved", "cta_if-intraday",
              "已恢复：股指日内动量 loop 连续 3 次未增长，进程重启后恢复", now - timedelta(hours=5), now - timedelta(hours=4), now - timedelta(hours=4, minutes=-10)),
             ("alert_burst_rb", "fill_burst", "P2", "resolved", "cta_rb-prod",
