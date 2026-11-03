@@ -3,7 +3,7 @@ import {
   getOverview, getRunners, getRunnerDetail, createRunner, getAccounts, getAccountDetail,
   getSignals, getPositions, getAlerts, acknowledgeAlert, silenceAlert,
   getReports, getReport, getSettings, saveSettings, testChannel,
-  getTokens, createToken, revokeToken, mockMeta,
+  getTokens, createToken, revokeToken, ingestReport, mockMeta,
 } from './data.mjs';
 
 export const MOCK_TOKEN = 'mock-token';
@@ -53,6 +53,14 @@ export async function handleApi(req, res) {
         return true;
       }
       send(res, 200, { token: MOCK_TOKEN, user: { name: 'Trader', role: 'owner' }, demo: true });
+      return true;
+    }
+
+    // 策略接入：用策略令牌鉴权，不走后台登录 token
+    if (method === 'POST' && route === '/report') {
+      const body = await readBody(req);
+      const result = ingestReport(bearer(req), body);
+      send(res, result.status, result.body);
       return true;
     }
 

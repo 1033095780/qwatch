@@ -611,7 +611,7 @@ function runnerView(def) {
     total_return_pct: num(def.total_return_pct),
     max_drawdown_pct: num(def.max_drawdown_pct),
     uptime_24h: num(def.uptime_24h, 2),
-    last_heartbeat: ISO(Date.now() - def.last_heartbeat_ago),
+    last_heartbeat: def.last_heartbeat_at || ISO(Date.now() - def.last_heartbeat_ago),
     sparkline: sparkOf(runnerCurves[def.id]),
     position_count: (POSITION_DEFS[def.id] || []).length,
   };
@@ -842,8 +842,9 @@ const TOKEN_MARKET_VALUES = Object.keys(MARKET_LABELS);
 const maskToken = (token) => 'qw_' + token.slice(0, 4) + '…' + token.slice(-4);
 
 function tokenView(record) {
+  const { token, ...rest } = record;
   return {
-    ...record,
+    ...rest,
     platform_label: PLATFORM_LABELS[record.platform] || '',
     strategy_type_label: STRATEGY_TYPE_LABELS[record.strategy_type] || '',
     markets: [...record.markets],
@@ -886,6 +887,7 @@ export function createToken(body) {
     strategy_type: STRATEGY_TYPE_VALUES.includes(payload.strategy_type) ? payload.strategy_type : '',
     tags: Array.isArray(payload.tags) ? payload.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8) : [],
     note: String(payload.note || '').trim(),
+    token,
     token_prefix: maskToken(token),
     status: 'active',
     created_at: ISO(Date.now()),
@@ -929,7 +931,7 @@ export function createRunner(body) {
     market, venue, platform, strategy_type: strategyType, tags,
     status: 'offline', accounts: accountIds,
     equity: 0, today_pnl: 0, total_return_pct: 0, max_drawdown_pct: 0,
-    uptime_24h: 0, last_heartbeat_ago: 365 * DAY, heartbeat_every: 10,
+    uptime_24h: 0, last_heartbeat_ago: 365 * DAY, heartbeat_every: 30,
     sharpe: 0, win_rate_pct: 0, uptime_30d: 0, initial: 0, seed,
   };
   RUNNER_DEFS.push(def);
@@ -969,6 +971,164 @@ export function testChannel(id) {
     message: '测试消息已发送：qwatch 通知渠道联通正常',
     latency_ms: Math.round(180 + rng() * 320),
     at: ch.last_test_at,
+  };
+}
+
+// ---------- 被动接收：POST /api/v1/report ----------
+const REPORT_DIRECTIONS = ['long', 'short'];
+const REPORT_ACTIONS = ['open', 'close', 'add', 'reduce'];
+
+function sideOf(direction, action) {
+  const isBuy = (direction === 'long') === (action === 'open' || action === 'add');
+  return isBuy ? 'buy' : 'sell';
+}
+
+function resolveSignalRunner(tokenValue) {
+  const token = tokens.find((t) => t.token === tokenValue && t.status === 'active');
+  if (!token) return { error: { status: 401, detail: 'token 无效或已吊销' } };
+  const def = runnerMap[token.runner_id];
+  if (!def) return { error: { status: 401, detail: 'token 未绑定有效策略' } };
+  return { token, def };
+}
+
+function pushStalledAlert(def, loop, count) {
+  const now = ISO(Date.now());
+  alerts.unshift({
+    id: 'alert_' + randomBytes(4).toString('hex'),
+    fingerprint: 'fp_' + randomBytes(4).toString('hex'),
+    rule: 'runner_stalled',
+    severity: 'P0',
+    status: 'firing',
+    runner_id: def.id,
+    runner_name: def.name,
+    summary: '策略卡死：' + def.name + ' 的 loop 连续 ' + count + ' 次未增长（当前 loop=' + loop + '）',
+    starts_at: now,
+    ends_at: undefined,
+    acked_at: undefined,
+    labels: { host: 'runner', loop: String(loop) },
+    updated_at: now,
+  });
+}
+
+export function ingestReport(tokenValue, payload) {
+  const auth = resolveSignalRunner(tokenValue);
+  if (auth.error) return { status: auth.error.status, body: { detail: auth.error.detail } };
+  const { token, def } = auth;
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const now = Date.now();
+  token.last_used_at = ISO(now);
+  token.request_count = (token.request_count || 0) + 1;
+
+  let eventTs = now;
+  if (body.ts !== undefined && body.ts !== null && body.ts !== '') {
+    const parsed = Date.parse(String(body.ts));
+    if (!Number.isFinite(parsed)) return { status: 400, body: { detail: 'ts 不是合法时间' } };
+    eventTs = parsed;
+  }
+
+  // 任何一个请求都先刷新心跳（即使 signal 校验失败）
+  def.last_heartbeat_at = ISO(now);
+  if (def.status === 'offline' || def.status === 'off_hours') def.status = 'running';
+  alerts.forEach((alert) => {
+    if (alert.runner_id === def.id && alert.rule === 'heartbeat_lost' && alert.status === 'firing') {
+      alert.status = 'resolved';
+      alert.ends_at = ISO(now);
+      alert.updated_at = ISO(now);
+    }
+  });
+
+  const msg = typeof body.msg === 'string' ? body.msg.trim().slice(0, 200) : '';
+  if (msg) def.last_msg = msg;
+
+  if (typeof body.equity === 'number' && Number.isFinite(body.equity)) {
+    def.equity = round(body.equity, 2);
+    const curve = runnerCurves[def.id];
+    if (curve && curve.length) {
+      curve[curve.length - 1].value = def.equity;
+    }
+  }
+
+  if (typeof body.loop === 'number' && Number.isFinite(body.loop)) {
+    const loop = Math.trunc(body.loop);
+    if (def.last_loop === loop) def.loop_same = (def.loop_same || 0) + 1;
+    else { def.last_loop = loop; def.loop_same = 1; }
+    const existing = alerts.find((a) => a.runner_id === def.id && a.rule === 'runner_stalled' && a.status !== 'resolved');
+    if (def.loop_same >= 3 && !existing) pushStalledAlert(def, loop, def.loop_same);
+    if (def.loop_same < 3 && existing) {
+      existing.status = 'resolved';
+      existing.ends_at = ISO(now);
+      existing.updated_at = ISO(now);
+    }
+  }
+
+  if (body.last_tick !== undefined && body.last_tick !== null && body.last_tick !== '') {
+    const parsed = Date.parse(String(body.last_tick));
+    if (Number.isFinite(parsed)) def.last_tick_at = ISO(parsed);
+  }
+
+  const signalKeys = ['symbol', 'direction', 'action', 'qty', 'price', 'amount'];
+  const hasSignal = signalKeys.some((key) => body[key] !== undefined && body[key] !== null && body[key] !== '');
+  const serverTime = ISO(Date.now());
+  if (!hasSignal) {
+    return { status: 200, body: { ok: true, heartbeat: true, signal_id: null, server_time: serverTime } };
+  }
+
+  // 严格校验：有任何一个信号字段，就必须 symbol + direction + action + qty 完整
+  const symbol = String(body.symbol || '').trim();
+  const direction = String(body.direction || '').trim();
+  const action = String(body.action || '').trim();
+  const qty = Number(body.qty);
+  if (!symbol) return { status: 400, body: { detail: 'signal.symbol 必填' } };
+  if (!REPORT_DIRECTIONS.includes(direction)) return { status: 400, body: { detail: 'signal.direction 必须是 long / short' } };
+  if (!REPORT_ACTIONS.includes(action)) return { status: 400, body: { detail: 'signal.action 必须是 open / close / add / reduce' } };
+  if (!Number.isFinite(qty) || qty <= 0) return { status: 400, body: { detail: 'signal.qty 必须是正数' } };
+
+  const code = symbol.includes(':') ? symbol.split(':').pop() : symbol;
+  const inst = INST[code] || {
+    code, name: code, market: def.market, venue: def.venue, currency: 'CNY', mult: 1,
+  };
+  const price = Number(body.price);
+  const hasPrice = Number.isFinite(price);
+  const amountInput = Number(body.amount);
+  const hasAmount = Number.isFinite(amountInput);
+  const amount = hasAmount ? amountInput : (hasPrice ? price * qty * (inst.mult || 1) : 0);
+  const account = accountMap[String(body.account || '')] || accountMap[def.accounts[0]] || null;
+  const signalId = String(body.id || '').trim() || ('sig_' + randomBytes(6).toString('hex'));
+
+  const existingSignal = signals.find((s) => s.id === signalId);
+  if (existingSignal) {
+    return { status: 200, body: { ok: true, heartbeat: true, signal_id: existingSignal.id, server_time: serverTime } };
+  }
+
+  signals.unshift({
+    id: signalId,
+    ts: ISO(eventTs),
+    runner_id: def.id,
+    runner_name: def.name,
+    platform: def.platform,
+    platform_label: PLATFORM_LABELS[def.platform],
+    strategy_type: def.strategy_type,
+    strategy_type_label: STRATEGY_TYPE_LABELS[def.strategy_type],
+    market: inst.market,
+    market_label: MARKET_LABELS[inst.market] || inst.market,
+    account_id: account ? account.id : '',
+    account_name: account ? account.name : '',
+    instrument: inst.code,
+    instrument_name: inst.name,
+    direction,
+    side: sideOf(direction, action),
+    action,
+    price: hasPrice ? num(price, 2) : '',
+    qty: String(qty),
+    amount: money(amount),
+    status: 'pending',
+    tags: [...def.tags],
+    msg,
+  });
+
+  return {
+    status: 200,
+    body: { ok: true, heartbeat: true, signal_id: signalId, server_time: serverTime },
   };
 }
 

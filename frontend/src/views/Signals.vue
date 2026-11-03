@@ -292,6 +292,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <th class="th-num sortable" @click="toggleSort('qty')">数量 <span class="sort">{{ sortIcon('qty') }}</span></th>
               <th class="th-num sortable" @click="toggleSort('amount')">金额 <span class="sort">{{ sortIcon('amount') }}</span></th>
               <th>状态</th>
+              <th>备注</th>
               <th>账户</th>
             </tr>
           </thead>
@@ -311,6 +312,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <td class="td-num">{{ signal.qty }}</td>
               <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
               <td><SignalStatusTag :status="signal.status" /></td>
+              <td class="truncate muted" :title="signal.msg || ''">{{ signal.msg || '—' }}</td>
               <td class="truncate muted">{{ signal.account_name }}</td>
             </tr>
           </tbody>

@@ -79,6 +79,8 @@ export interface Signal {
   instrument_name: string;
   side: SignalSide;
   action: SignalAction;
+  direction?: 'long' | 'short';
+  msg?: string;
   price: string;
   qty: string;
   amount: string;
