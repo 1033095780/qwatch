@@ -1,0 +1,517 @@
+<script setup lang="ts">
+// StrategyDetail.vue — 策略详情：状态头、6 KPI、Tabs（净值/成交/持仓/心跳/告警/配置）。
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { NButton, useMessage } from 'naive-ui';
+import { ArrowUpRight, Copy, RefreshCw } from 'lucide-vue-next';
+import { api } from '@/api/client';
+import type { RangeKey, RunnerDetail } from '@/api/types';
+import { useSettingsStore } from '@/stores/settings';
+import {
+  fmtDateTime, fmtDuration, fmtFullDateTime, fmtMoney, fmtPct, fmtUtc, fromNow, pnlClass,
+} from '@/utils/format';
+import DrawdownChart from '@/components/DrawdownChart.vue';
+import EmptyState from '@/components/EmptyState.vue';
+import EquityChart from '@/components/EquityChart.vue';
+import HeartbeatBar from '@/components/HeartbeatBar.vue';
+import MetricCard from '@/components/MetricCard.vue';
+import PageHeader from '@/components/PageHeader.vue';
+import PnlText from '@/components/PnlText.vue';
+import RangeTabs from '@/components/RangeTabs.vue';
+import SectionCard from '@/components/SectionCard.vue';
+import SeverityTag from '@/components/SeverityTag.vue';
+import StatusTag from '@/components/StatusTag.vue';
+import MarketTag from '@/components/MarketTag.vue';
+import TabBar from '@/components/TabBar.vue';
+import type { TabItem } from '@/components/TabBar.vue';
+
+const route = useRoute();
+const settings = useSettingsStore();
+const message = useMessage();
+
+const runnerId = computed(() => String(route.params.id || ''));
+const detail = ref<RunnerDetail | null>(null);
+const loading = ref(true);
+const refreshing = ref(false);
+const error = ref('');
+const range = ref<RangeKey>('all');
+const activeTab = ref('equity');
+
+const tabs = computed<TabItem[]>(() => [
+  { key: 'equity', label: '净值' },
+  { key: 'fills', label: '成交', count: detail.value?.fills.length ?? 0 },
+  { key: 'positions', label: '持仓', count: detail.value?.positions.length ?? 0 },
+  { key: 'heartbeat', label: '心跳' },
+  { key: 'alerts', label: '告警', count: detail.value?.alerts.length ?? 0 },
+  { key: 'config', label: '配置' },
+]);
+
+const periodReturn = computed(() => {
+  const curve = detail.value?.equity ?? [];
+  if (curve.length < 2) return null;
+  const first = Number(curve[0].value);
+  const last = Number(curve[curve.length - 1].value);
+  return first > 0 ? ((last - first) / first) * 100 : null;
+});
+
+const runningOutage = computed(() => detail.value?.outages.find((o) => !o.end) ?? null);
+
+async function load(initial = false): Promise<void> {
+  if (initial) loading.value = true;
+  else refreshing.value = true;
+  error.value = '';
+  try {
+    detail.value = await api.runner(runnerId.value, range.value);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '策略详情加载失败';
+  } finally {
+    loading.value = false;
+    refreshing.value = false;
+  }
+}
+
+async function copyId(): Promise<void> {
+  const text = detail.value ? detail.value.runner.strategy + '@' + detail.value.runner.version + ' (' + detail.value.runner.id + ')' : runnerId.value;
+  try {
+    await navigator.clipboard.writeText(text);
+    message.success('已复制策略标识');
+  } catch {
+    message.error('复制失败，请手动选择文本复制');
+  }
+}
+
+watch(range, () => load());
+watch(() => settings.refreshSeq, () => load());
+
+onMounted(() => load(true));
+</script>
+
+<template>
+  <div class="page">
+    <div v-if="loading && !detail" class="page">
+      <div class="skel skel-line" style="width: 180px; height: 12px" />
+      <div class="skel skel-line" style="width: 320px; height: 28px" />
+      <div class="stats-grid">
+        <div v-for="i in 6" :key="i" class="skel" style="height: 104px; border-radius: 12px" />
+      </div>
+      <div class="skel" style="height: 420px; border-radius: 12px" />
+    </div>
+
+    <div v-else-if="error && !detail" class="card">
+      <EmptyState title="策略详情加载失败" :description="error">
+        <template #action>
+          <n-button size="small" @click="load(true)">重新加载</n-button>
+        </template>
+      </EmptyState>
+    </div>
+
+    <template v-else-if="detail">
+      <PageHeader
+        :title="detail.runner.name"
+        :subtitle="detail.runner.strategy + '@' + detail.runner.version + ' · ' + detail.runner.venue + ' · 最后心跳 ' + fromNow(detail.runner.last_heartbeat)"
+        back-to="/strategies"
+        back-label="策略列表"
+      >
+        <template #extra>
+          <StatusTag :status="detail.runner.status" />
+          <MarketTag :market="detail.runner.market" :venue="detail.runner.venue" />
+          <n-button size="small" @click="copyId">
+            <template #icon><Copy :size="13" /></template>
+            复制标识
+          </n-button>
+          <n-button size="small" tag="a" :href="'/trades?runner_id=' + detail.runner.id" @click.prevent="$router.push('/trades?runner_id=' + detail.runner.id)">
+            <template #icon><ArrowUpRight :size="13" /></template>
+            查看成交
+          </n-button>
+          <n-button size="small" :loading="refreshing" @click="load()">
+            <template #icon><RefreshCw :size="13" /></template>
+            刷新
+          </n-button>
+        </template>
+      </PageHeader>
+
+      <div v-if="error" class="error-bar">
+        <span class="dot" />{{ error }}
+        <n-button text size="tiny" @click="load(true)">重试</n-button>
+      </div>
+
+      <div class="stats-grid">
+        <MetricCard label="总权益" :value="'¥' + fmtMoney(detail.runner.equity)" :sub="detail.runner.accounts.map((a) => a.name).join(' / ')" />
+        <MetricCard label="今日盈亏" :value="'¥' + fmtMoney(detail.metrics.today_pnl)" :change="detail.metrics.today_pnl" :change-pct="detail.runner.today_pnl_pct" sub="今日" />
+        <MetricCard label="累计收益" :value="fmtPct(detail.metrics.total_return_pct)" :change="detail.metrics.total_return_pct" :change-pct="null" sub="策略归因口径" />
+        <MetricCard label="最大回撤" :value="fmtPct(detail.metrics.max_drawdown_pct, 2, false)" :sub="'夏普 ' + detail.metrics.sharpe" />
+        <MetricCard label="胜率" :value="detail.metrics.win_rate_pct + '%'" :sub="'近 30 天可用率 ' + detail.metrics.uptime_30d + '%'" />
+        <MetricCard
+          label="心跳"
+          :value="fromNow(detail.runner.last_heartbeat)"
+          :sub="'间隔 ' + detail.config.heartbeat_interval_s + 's · seq ' + detail.config.last_seq"
+        />
+      </div>
+
+      <section class="card tabs-card">
+        <TabBar v-model="activeTab" :tabs="tabs" />
+
+        <div v-show="activeTab === 'equity'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">净值与回撤</h2>
+              <p class="panel-sub">策略归因口径（非资金曲线）· Asia/Shanghai</p>
+            </div>
+            <RangeTabs v-model="range" />
+          </div>
+          <div :class="{ dimmed: refreshing }">
+            <EquityChart :data="detail.equity" :height="300" value-label="策略净值" />
+            <div class="dd-head">
+              <span class="eyebrow">回撤</span>
+              <span v-if="periodReturn !== null" class="muted">
+                区间收益 <span class="num" :class="pnlClass(periodReturn)">{{ fmtPct(periodReturn) }}</span>
+              </span>
+              <span class="spacer" />
+              <span class="muted mono">{{ range.toUpperCase() }}</span>
+            </div>
+            <DrawdownChart :data="detail.drawdown" :height="132" />
+          </div>
+        </div>
+
+        <div v-show="activeTab === 'fills'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">最近成交</h2>
+              <p class="panel-sub">仅展示最近 {{ detail.fills.length }} 笔；完整体验请到交易流水</p>
+            </div>
+            <n-button size="small" @click="$router.push('/trades?runner_id=' + detail.runner.id)">全部流水</n-button>
+          </div>
+          <div v-if="detail.fills.length" class="tbl-wrap">
+            <table class="tbl tbl--compact">
+              <thead>
+                <tr>
+                  <th>时间</th><th>账户</th><th>品种</th><th>方向</th><th>开平</th>
+                  <th class="th-num">数量</th><th class="th-num">成交价</th><th class="th-num">金额</th><th class="th-num">手续费</th><th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="fill in detail.fills" :key="fill.id">
+                  <td class="mono nowrap">{{ fmtDateTime(fill.ts) }}</td>
+                  <td class="truncate">{{ fill.account_name }}</td>
+                  <td><span class="mono">{{ fill.instrument }}</span><span class="inst">{{ fill.instrument_name }}</span></td>
+                  <td><span class="side" :class="fill.side">{{ fill.side === 'buy' ? '买入' : '卖出' }}</span></td>
+                  <td class="muted">{{ fill.position_effect === 'open' ? '开仓' : '平仓' }}</td>
+                  <td class="td-num">{{ fill.qty }}</td>
+                  <td class="td-num">{{ fill.price }}</td>
+                  <td class="td-num">{{ fmtMoney(fill.amount) }}</td>
+                  <td class="td-num faint">{{ fmtMoney(fill.fee) }}</td>
+                  <td>
+                    <span class="fill-status" :class="fill.status">{{ fill.status === 'filled' ? '已成交' : '部分成交' }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <EmptyState v-else compact title="暂无成交" description="该策略近 3 个交易日没有成交记录" />
+        </div>
+
+        <div v-show="activeTab === 'positions'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">当前持仓</h2>
+              <p class="panel-sub">{{ detail.positions.length }} 个标的 · 浮动盈亏按最新价计算</p>
+            </div>
+          </div>
+          <div v-if="detail.positions.length" class="tbl-wrap">
+            <table class="tbl tbl--compact">
+              <thead>
+                <tr><th>品种</th><th>市场</th><th class="th-num">数量</th><th class="th-num">开仓均价</th><th class="th-num">最新价</th><th class="th-num">市值</th><th class="th-num">浮动盈亏</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="pos in detail.positions" :key="pos.instrument">
+                  <td><span class="mono">{{ pos.instrument }}</span><span class="inst">{{ pos.instrument_name }}</span></td>
+                  <td class="muted">{{ pos.market === 'CN_A' ? 'A股' : '期货' }}</td>
+                  <td class="td-num">{{ pos.qty }}</td>
+                  <td class="td-num">{{ pos.avg_price }}</td>
+                  <td class="td-num">{{ pos.last_price }}</td>
+                  <td class="td-num">{{ fmtMoney(pos.market_value) }}</td>
+                  <td class="td-num"><PnlText :value="pos.pnl" :pct="pos.pnl_pct" show-pct size="sm" /></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <EmptyState v-else compact title="当前无持仓" description="策略平仓后持仓会归零" />
+        </div>
+
+        <div v-show="activeTab === 'heartbeat'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">心跳与可用率</h2>
+              <p class="panel-sub">近 24 小时 · 每段 30 分钟 · 非交易时段不判活</p>
+            </div>
+          </div>
+          <HeartbeatBar :segments="detail.heartbeat_timeline" :height="30" />
+          <div class="hb-stats">
+            <div class="hb-stat"><span class="k">24h 可用率</span><span class="v mono">{{ detail.runner.uptime_24h }}%</span></div>
+            <div class="hb-stat"><span class="k">30d 可用率</span><span class="v mono">{{ detail.metrics.uptime_30d }}%</span></div>
+            <div class="hb-stat"><span class="k">最后心跳</span><span class="v mono">{{ fmtDateTime(detail.runner.last_heartbeat) }}（{{ fromNow(detail.runner.last_heartbeat) }}）</span></div>
+            <div class="hb-stat"><span class="k">心跳间隔 / 软/硬阈值</span><span class="v mono">{{ detail.config.heartbeat_interval_s }}s / {{ detail.config.soft_timeout_s }}s / {{ detail.config.hard_timeout_s }}s</span></div>
+            <div v-if="runningOutage" class="hb-stat">
+              <span class="k">当前中断</span>
+              <span class="v mono">始于 {{ fmtDateTime(runningOutage.start) }} · 持续 {{ fmtDuration(runningOutage.duration_s) }}</span>
+            </div>
+          </div>
+          <h3 class="sub-title">断线记录</h3>
+          <div v-if="detail.outages.length" class="tbl-wrap">
+            <table class="tbl tbl--compact">
+              <thead><tr><th>开始</th><th>结束</th><th class="th-num">时长</th><th>状态</th></tr></thead>
+              <tbody>
+                <tr v-for="(outage, i) in detail.outages" :key="i">
+                  <td class="mono">{{ fmtFullDateTime(outage.start) }}</td>
+                  <td class="mono">{{ outage.end ? fmtFullDateTime(outage.end) : '—' }}</td>
+                  <td class="td-num mono">{{ fmtDuration(outage.duration_s) }}</td>
+                  <td>
+                    <span v-if="!outage.end" class="ongoing">进行中</span>
+                    <span v-else class="muted">已恢复</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <EmptyState v-else compact title="近 24 小时无断线" description="心跳稳定，无需处理" />
+        </div>
+
+        <div v-show="activeTab === 'alerts'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">告警历史</h2>
+              <p class="panel-sub">该 Runner 的全部告警（活跃 + 历史）</p>
+            </div>
+            <n-button size="small" @click="$router.push('/alerts')">告警中心</n-button>
+          </div>
+          <div v-if="detail.alerts.length" class="alert-list">
+            <div v-for="alert in detail.alerts" :key="alert.id" class="alert-row">
+              <SeverityTag :severity="alert.severity" />
+              <div class="alert-main">
+                <p class="alert-summary">{{ alert.summary }}</p>
+                <p class="alert-meta mono">
+                  {{ alert.rule }} · 开始 {{ fmtDateTime(alert.starts_at) }}
+                  <span v-if="alert.ends_at"> · 结束 {{ fmtDateTime(alert.ends_at) }}</span>
+                </p>
+              </div>
+              <span class="alert-status" :class="alert.status">
+                {{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}
+              </span>
+            </div>
+          </div>
+          <EmptyState v-else compact title="暂无告警" description="该策略近期没有触发任何规则" />
+        </div>
+
+        <div v-show="activeTab === 'config'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Runner 配置</h2>
+              <p class="panel-sub">只读展示</p>
+            </div>
+          </div>
+          <dl class="kv">
+            <div class="kv-item"><dt>策略定义</dt><dd class="mono">{{ detail.config.strategy }}</dd></div>
+            <div class="kv-item"><dt>版本</dt><dd class="mono">{{ detail.config.version }}</dd></div>
+            <div class="kv-item"><dt>运行实例</dt><dd class="mono">{{ detail.runner.id }}</dd></div>
+            <div class="kv-item"><dt>宿主 / PID</dt><dd class="mono">{{ detail.config.host }} / {{ detail.config.pid }}</dd></div>
+            <div class="kv-item"><dt>交易日历</dt><dd class="mono">{{ detail.config.calendar_id }}</dd></div>
+            <div class="kv-item"><dt>启动时间</dt><dd class="mono">{{ fmtFullDateTime(detail.config.started_at) }}</dd></div>
+            <div class="kv-item"><dt>心跳间隔</dt><dd class="mono">{{ detail.config.heartbeat_interval_s }}s</dd></div>
+            <div class="kv-item"><dt>软 / 硬阈值</dt><dd class="mono">{{ detail.config.soft_timeout_s }}s / {{ detail.config.hard_timeout_s }}s</dd></div>
+            <div class="kv-item"><dt>最后 seq</dt><dd class="mono">{{ detail.config.last_seq }}</dd></div>
+            <div class="kv-item"><dt>环境</dt><dd class="mono">{{ detail.config.env }}</dd></div>
+            <div class="kv-item"><dt>账户</dt><dd class="mono">{{ detail.config.accounts.join(', ') }}</dd></div>
+            <div class="kv-item"><dt>最近上报</dt><dd class="mono">{{ fmtUtc(detail.runner.last_heartbeat) }}</dd></div>
+          </dl>
+        </div>
+      </section>
+    </template>
+  </div>
+</template>
+
+<style scoped>
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--gap);
+}
+.tabs-card {
+  padding-top: 4px;
+}
+.tab-panel {
+  padding: 16px 0 4px;
+}
+.dimmed {
+  opacity: 0.6;
+  transition: opacity 160ms ease;
+}
+.dd-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.dd-head .spacer {
+  flex: 1;
+}
+.inst {
+  display: block;
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.2;
+}
+.side {
+  display: inline-flex;
+  height: 19px;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.side.buy {
+  color: var(--up);
+  background: color-mix(in srgb, var(--up) 12%, transparent);
+}
+.side.sell {
+  color: var(--down);
+  background: color-mix(in srgb, var(--down) 12%, transparent);
+}
+.fill-status {
+  font-size: 11px;
+}
+.fill-status.filled {
+  color: #2ecc8f;
+}
+.fill-status.partial {
+  color: #f5a524;
+}
+.hb-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 8px;
+}
+.hb-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(21, 28, 44, 0.5);
+}
+.hb-stat .k {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.hb-stat .v {
+  font-size: 12px;
+  color: var(--text);
+}
+.sub-title {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ongoing {
+  font-size: 11px;
+  color: #ff8f86;
+}
+.alert-list {
+  display: flex;
+  flex-direction: column;
+}
+.alert-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 6px;
+  border-bottom: 1px solid rgba(30, 38, 55, 0.65);
+}
+.alert-row:last-child {
+  border-bottom: none;
+}
+.alert-main {
+  flex: 1;
+  min-width: 0;
+}
+.alert-summary {
+  font-size: 12px;
+  color: var(--text);
+}
+.alert-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.alert-status {
+  font-size: 11px;
+  white-space: nowrap;
+}
+.alert-status.firing {
+  color: #ff8f86;
+}
+.alert-status.acknowledged {
+  color: #f5b64b;
+}
+.alert-status.resolved {
+  color: var(--text-3);
+}
+.kv {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.kv-item {
+  background: var(--surface);
+  padding: 12px 14px;
+}
+.kv-item dt {
+  font-size: 10px;
+  color: var(--text-3);
+  margin-bottom: 3px;
+}
+.kv-item dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+@media (max-width: 1279px) {
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .kv {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 899px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .hb-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 639px) {
+  .stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .kv {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hb-stats {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+</style>

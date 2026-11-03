@@ -1,0 +1,25 @@
+# 本地规划与协作资料，不随开源仓库发布
+docs/
+AGENTS.md
+Agents.md
+
+# 依赖与构建产物
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.local
+*.log
+
+# 环境与密钥
+.env
+.env.*
+secrets.yaml
+*.pem
+*.key
+
+# 运行时数据
+data/
+*.db
+*.sqlite
+*.sqlite3

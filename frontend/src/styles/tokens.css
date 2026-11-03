@@ -1,0 +1,51 @@
+/* tokens.css — qwatch 设计 tokens（唯一来源：docs/UI-DESIGN.md §2） */
+:root {
+  --bg: #0a0e16;
+  --surface: #101624;
+  --surface-2: #151c2c;
+  --border: #1e2637;
+  --border-strong: #2a3448;
+  --text: #e9eef6;
+  --text-2: #9aa7bc;
+  --text-3: #5f6d84;
+  --primary: #5b8cff;
+  --primary-soft: rgba(91, 140, 255, 0.12);
+  --primary-hover: #7aa3ff;
+  --up: #f25c5c;
+  --down: #2ecc8f;
+  --warning: #f5a524;
+  --danger: #f04438;
+  --info: #38bdf8;
+  --chart-1: #5b8cff;
+  --chart-2: #2ecc8f;
+  --chart-3: #f5a524;
+  --chart-4: #b07cff;
+  --chart-5: #38bdf8;
+  --chart-6: #f25c5c;
+  --grid-line: #1a2230;
+
+  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+
+  --radius-card: 12px;
+  --radius-btn: 8px;
+  --radius-tag: 6px;
+  --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.35);
+
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 64px;
+  --topbar-h: 56px;
+  --page-max: 1680px;
+  --gap: 16px;
+  --pad-page: 24px;
+}
+
+/* 涨跌配色可配置（settings store 在根节点上切换） */
+:root[data-up-scheme="red_up"] {
+  --up: #f25c5c;
+  --down: #2ecc8f;
+}
+:root[data-up-scheme="green_up"] {
+  --up: #2ecc8f;
+  --down: #f25c5c;
+}
