@@ -1,23 +1,21 @@
-// vite.config.ts — Vite 7 + Vue 3；dev 期间 /api/v1 由 mock 中间件直接应答（真实 HTTP）。
+// vite.config.ts — Vite 7 + Vue 3；dev 时 /api/v1 代理到 FastAPI 后端。
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
-import { apiMiddleware } from './mock/api.mjs';
 
 export default defineConfig({
-  plugins: [
-    vue(),
-    {
-      name: 'qwatch-mock-api',
-      configureServer(server) {
-        server.middlewares.use(apiMiddleware());
-      },
-    },
-  ],
+  plugins: [vue()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
-  server: { host: '127.0.0.1', port: 5173, strictPort: true },
+  server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8080', changeOrigin: true },
+    },
+  },
   build: {
     target: 'es2020',
     chunkSizeWarningLimit: 1400,

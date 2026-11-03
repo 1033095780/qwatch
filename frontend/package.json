@@ -3,13 +3,12 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "qwatch · 策略守望 前端（v0.1 Mock）",
+  "description": "qwatch 监控工作台前端",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "typecheck": "vue-tsc --noEmit",
-    "preview": "vite preview",
-    "start": "node mock-server.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "dayjs": "^1.11.13",

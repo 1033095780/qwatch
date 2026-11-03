@@ -84,7 +84,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="设置" subtitle="通知渠道 / 策略令牌 / 交易日历 / 安全">
+    <PageHeader title="设置" subtitle="通知渠道 / 交易日历 / 安全 / 关于">
       <template #extra>
         <span class="chip"><StatusDot status="running" :size="6" /> 服务正常</span>
       </template>
