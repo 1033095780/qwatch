@@ -293,11 +293,11 @@ def alert_view(row: sqlite3.Row) -> dict[str, Any]:
 def alerts_query(conn: sqlite3.Connection, status: str) -> dict[str, Any]:
     if status == "history":
         rows = conn.execute(
-            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status = 'resolved' ORDER BY a.starts_at DESC"
+            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status IN ('acknowledged', 'resolved') ORDER BY a.starts_at DESC"
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status != 'resolved' ORDER BY a.starts_at DESC"
+            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status = 'firing' ORDER BY a.starts_at DESC"
         ).fetchall()
     active_count = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
     return {"items": [alert_view(row) for row in rows], "active_count": active_count}

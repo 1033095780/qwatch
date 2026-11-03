@@ -43,7 +43,7 @@ const STATUS_LABEL: Record<Alert['status'], string> = {
 };
 
 const firingCount = computed(() => activeItems.value.filter((a) => a.status === 'firing').length);
-const ackedCount = computed(() => activeItems.value.filter((a) => a.status === 'acknowledged').length);
+const ackedCount = computed(() => historyItems.value.filter((a) => a.status === 'acknowledged').length);
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'active', label: '活跃', count: activeItems.value.length },
