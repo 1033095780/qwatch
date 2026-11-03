@@ -54,6 +54,7 @@ export interface Runner {
   today_pnl: string;
   today_pnl_pct: string;
   total_return_pct: string;
+  total_pnl: string;
   max_drawdown_pct: string;
   sharpe: string;
   profit_factor: string;
@@ -186,6 +187,7 @@ export interface RunnerDetail {
   range: RangeKey;
   metrics: {
     total_return_pct: string;
+    total_pnl: string;
     annualized_return_pct: string;
     today_pnl: string;
     max_drawdown_pct: string;

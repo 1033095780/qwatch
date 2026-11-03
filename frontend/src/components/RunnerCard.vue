@@ -27,6 +27,11 @@ const winRate = (value: string): string => {
   const number = Number(value);
   return number > 0 ? number.toFixed(1) + '%' : '—';
 };
+const signedMoney = (value: string): string => {
+  const number = Number(value);
+  const amount = Math.abs(number).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (number > 0 ? '+' : number < 0 ? '-' : '') + '¥' + amount;
+};
 </script>
 
 <template>
@@ -53,10 +58,15 @@ const winRate = (value: string): string => {
         <span class="equity num">¥{{ Number(runner.equity).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</span>
       </div>
       <div class="pnl-wrap">
-        <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" bold />
-        <span class="muted sep">·</span>
-        <span class="muted">总收益</span>
-        <span class="mono" :class="Number(runner.total_return_pct) >= 0 ? 'pos' : 'neg'">{{ fmtPct(runner.total_return_pct) }}</span>
+        <div class="pnl-line">
+          <span class="muted">今日</span>
+          <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" />
+        </div>
+        <div class="pnl-line">
+          <span class="muted">累计</span>
+          <span class="mono total-pnl" :class="Number(runner.total_pnl) >= 0 ? 'pos' : 'neg'">{{ signedMoney(runner.total_pnl) }}</span>
+          <span class="muted pct">{{ fmtPct(runner.total_return_pct) }}</span>
+        </div>
       </div>
     </div>
 
@@ -146,14 +156,23 @@ const winRate = (value: string): string => {
 }
 .pnl-wrap {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 3px;
   font-size: 11px;
-  flex-wrap: wrap;
   padding-bottom: 2px;
 }
-.sep {
-  opacity: 0.5;
+.pnl-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.total-pnl {
+  font-size: 12px;
+  font-weight: 600;
+}
+.pct {
+  font-size: 10px;
 }
 .pos {
   color: var(--up);

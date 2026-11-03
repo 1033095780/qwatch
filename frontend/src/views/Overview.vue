@@ -2,7 +2,7 @@
 // Overview.vue — 总览：KPI 四卡、组合净值/回撤、组合指标、策略状态、最新信号、告警动态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, useMessage } from 'naive-ui';
-import { Activity, ArrowRight, Bell, ChevronRight, Wallet } from 'lucide-vue-next';
+import { Activity, ArrowRight, Bell, ChevronDown, ChevronRight, ChevronUp, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Overview, RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -12,7 +12,6 @@ import DrawdownChart from '@/components/DrawdownChart.vue';
 import EquityChart from '@/components/EquityChart.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import HeartbeatMini from '@/components/HeartbeatMini.vue';
-import MetricCard from '@/components/MetricCard.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import PnlText from '@/components/PnlText.vue';
 import RangeTabs from '@/components/RangeTabs.vue';
@@ -30,6 +29,7 @@ const refreshing = ref(false);
 const error = ref('');
 const range = ref<RangeKey>('all');
 const scope = ref<string>('portfolio');
+const metricsOpen = ref(true);
 const runnerDetail = ref<RunnerDetail | null>(null);
 const scopeLoading = ref(false);
 
@@ -155,51 +155,82 @@ onMounted(() => load(true));
         <n-button text size="tiny" @click="retry">重试</n-button>
       </div>
 
-      <div class="grid grid-kpi">
-        <MetricCard
-          label="总权益"
-          :value="'¥' + fmtMoney(data.total_equity)"
-          :change="data.today_pnl"
-          :change-pct="data.today_pnl_pct"
-          sub="较昨日收盘"
-          :icon="Wallet"
-        />
-        <MetricCard
-          label="今日盈亏"
-          :value="'¥' + fmtMoney(data.today_pnl)"
-          :change="data.today_pnl_pct"
-          :change-pct="null"
-          sub="今日收益率"
-          :icon="Activity"
-          accent="warning"
-        />
-        <MetricCard
-          label="策略运行"
-          :value="data.running + ' / ' + data.total"
-          :icon="Activity"
-          accent="primary"
-        />
-        <MetricCard
-          label="活跃告警"
-          :value="data.active_alerts + ' 条'"
-          :sub="activeAlertCount > 0 ? '心跳丢失 / 策略卡死' : '全部正常'"
-          :icon="Bell"
-          :accent="activeAlertCount > 0 ? 'danger' : 'primary'"
-        />
-      </div>
-
-      <SectionCard title="组合指标" :subtitle="metricsSubtitle">
-        <div v-if="metricItems.length" class="metric-strip">
-          <div v-for="item in metricItems" :key="item.label" class="metric-cell">
-            <span class="metric-label">{{ item.label }}</span>
-            <span class="metric-value mono" :class="item.tone">{{ item.value }}</span>
+      <section class="card overview-board">
+        <div class="board-head">
+          <div class="board-title-wrap">
+            <h2 class="board-title">组合概览</h2>
+            <p class="board-sub">{{ metricsSubtitle }}</p>
           </div>
+          <button type="button" class="board-toggle" @click="metricsOpen = !metricsOpen">
+            <span>{{ metricsOpen ? '收起指标' : '展开指标' }}</span>
+            <ChevronUp v-if="metricsOpen" :size="14" />
+            <ChevronDown v-else :size="14" />
+          </button>
         </div>
-        <div v-else-if="scopeLoading" class="metric-strip">
-          <div v-for="i in 6" :key="i" class="skel" style="height: 58px; border-radius: 8px" />
+
+        <div class="board-kpis">
+          <div class="board-kpi">
+            <div class="board-kpi-top">
+              <span class="kpi-label">总权益</span>
+              <span class="kpi-icon"><Wallet :size="15" /></span>
+            </div>
+            <div class="kpi-value">¥{{ fmtMoney(data.total_equity) }}</div>
+            <div class="board-kpi-foot">
+              <PnlText :value="data.today_pnl" :pct="data.today_pnl_pct" show-pct size="sm" />
+              <span class="board-kpi-sub">较昨日收盘</span>
+            </div>
+          </div>
+
+          <div class="board-kpi">
+            <div class="board-kpi-top">
+              <span class="kpi-label">今日盈亏</span>
+              <span class="kpi-icon"><Activity :size="15" /></span>
+            </div>
+            <div class="kpi-value">¥{{ fmtMoney(data.today_pnl) }}</div>
+            <div class="board-kpi-foot">
+              <PnlText :value="data.today_pnl" :pct="data.today_pnl_pct" show-pct size="sm" />
+              <span class="board-kpi-sub">今日收益率</span>
+            </div>
+          </div>
+
+          <router-link to="/strategies" class="board-kpi board-kpi--link">
+            <div class="board-kpi-top">
+              <span class="kpi-label">策略运行</span>
+              <span class="kpi-icon"><Activity :size="15" /></span>
+            </div>
+            <div class="kpi-value">{{ data.running }} <span class="kpi-dim">/ {{ data.total }}</span></div>
+            <div class="board-kpi-foot"><span class="board-kpi-sub">运行中 / 全部策略</span></div>
+          </router-link>
+
+          <router-link
+            to="/alerts"
+            class="board-kpi board-kpi--link"
+            :class="{ 'board-kpi--danger': activeAlertCount > 0 }"
+          >
+            <div class="board-kpi-top">
+              <span class="kpi-label">活跃告警</span>
+              <span class="kpi-icon" :class="{ danger: activeAlertCount > 0 }"><Bell :size="15" /></span>
+            </div>
+            <div class="kpi-value" :class="{ danger: activeAlertCount > 0 }">{{ data.active_alerts }} <span class="kpi-unit">条</span></div>
+            <div class="board-kpi-foot">
+              <span class="board-kpi-sub">{{ activeAlertCount > 0 ? '心跳丢失 / 策略卡死 · 点击处理' : '全部正常' }}</span>
+            </div>
+          </router-link>
         </div>
-        <EmptyState v-else compact title="暂无风险指标" description="等待策略净值数据后生成" />
-      </SectionCard>
+
+        <div v-show="metricsOpen" class="board-risks">
+          <div v-for="item in metricItems" :key="item.label" class="risk-cell">
+            <span class="risk-label">{{ item.label }}</span>
+            <span class="risk-value mono" :class="item.tone">{{ item.value }}</span>
+          </div>
+          <template v-if="!metricItems.length">
+            <div v-for="i in 6" :key="i" class="risk-cell">
+              <span class="skel skel-line" style="width: 42px; height: 10px" />
+              <span class="skel skel-line" style="width: 64px; height: 18px; margin-top: 6px" />
+            </div>
+          </template>
+        </div>
+      </section>
 
       <div class="grid grid-main">
         <SectionCard
@@ -446,35 +477,152 @@ onMounted(() => load(true));
 .dd-head .spacer {
   flex: 1;
 }
-.metric-strip {
+.overview-board {
+  padding: 18px 20px 16px;
+}
+.board-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.board-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.board-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.board-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.board-toggle:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.board-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.board-kpi {
+  position: relative;
+  min-width: 0;
+  padding: 0 20px;
+  border-left: 1px solid var(--border);
+  color: inherit;
+}
+.board-kpi:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+.board-kpi--link {
+  border-radius: 8px;
+  transition: background-color 150ms ease;
+}
+.board-kpi--link:hover {
+  background: rgba(21, 28, 44, 0.55);
+}
+.board-kpi--danger {
+  background: rgba(240, 68, 56, 0.055);
+}
+.board-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kpi-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 8px;
+  color: #a9c2ff;
+  border: 1px solid rgba(91, 140, 255, 0.22);
+  background: rgba(91, 140, 255, 0.1);
+}
+.kpi-icon.danger {
+  color: #ff8f86;
+  border-color: rgba(240, 68, 56, 0.32);
+  background: rgba(240, 68, 56, 0.12);
+}
+.board-kpi .kpi-value {
+  margin-top: 6px;
+}
+.kpi-value.danger {
+  color: #ff8f86;
+}
+.kpi-dim {
+  color: var(--text-2);
+  font-size: 22px;
+}
+.kpi-unit {
+  color: var(--text-2);
+  font-family: var(--font-sans);
+  font-size: 18px;
+}
+.board-kpi-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.board-kpi-sub {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.board-risks {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
 }
-.metric-cell {
+.risk-cell {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(21, 28, 44, 0.5);
+  padding: 2px 16px;
+  border-left: 1px solid var(--border);
 }
-.metric-label {
-  font-size: 10px;
-  color: var(--text-3);
+.risk-cell:first-child {
+  padding-left: 0;
+  border-left: none;
 }
-.metric-value {
-  font-size: 16px;
+.risk-label {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.risk-value {
+  font-size: 18px;
   font-weight: 600;
-  font-variant-numeric: tabular-nums;
   color: var(--text);
+  white-space: nowrap;
 }
-.metric-value.is-up {
+.risk-value.is-up {
   color: var(--up);
 }
-.metric-value.is-down {
+.risk-value.is-down {
   color: var(--down);
 }
 .status-list {
@@ -591,13 +739,52 @@ onMounted(() => load(true));
   color: var(--primary);
 }
 @media (max-width: 1279px) {
-  .metric-strip {
+  .board-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .board-kpi {
+    padding: 14px 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+  .board-kpi:nth-child(-n + 2) {
+    padding-top: 0;
+    border-top: none;
+  }
+  .board-kpi:nth-child(even) {
+    padding-left: 16px;
+    border-left: 1px solid var(--border);
+  }
+  .board-risks {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+  .risk-cell:nth-child(3n + 1) {
+    padding-left: 0;
+    border-left: none;
   }
 }
 @media (max-width: 639px) {
-  .metric-strip {
+  .overview-board {
+    padding: 16px;
+  }
+  .board-kpi {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .board-kpi:nth-child(even) {
+    padding-left: 12px;
+  }
+  .board-risks {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .risk-cell:nth-child(3n + 1) {
+    padding-left: 16px;
+    border-left: 1px solid var(--border);
+  }
+  .risk-cell:nth-child(odd) {
+    padding-left: 0;
+    border-left: none;
   }
 }
 </style>

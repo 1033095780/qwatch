@@ -229,6 +229,13 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     today = float(row["today_pnl"])
     base = equity - today
     stats = runner_analytics(conn, row["id"])
+    initial = float(row["initial_equity"] or 0)
+    if initial <= 0:
+        first = conn.execute(
+            "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (row["id"],)
+        ).fetchone()
+        initial = float(first["equity"]) if first else 0.0
+    total_pnl = equity - initial if initial > 0 else 0.0
     return {
         "id": row["id"], "name": row["name"], "strategy": row["strategy"], "version": row["version"],
         "description": row["description"] or "",
@@ -240,6 +247,7 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "equity": f"{equity:.2f}", "today_pnl": f"{today:.2f}",
         "today_pnl_pct": f"{(today / base * 100) if base else 0:.2f}",
         "total_return_pct": f"{stats['total_return']:.2f}",
+        "total_pnl": f"{total_pnl:.2f}",
         "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
         "sharpe": f"{stats['sharpe']:.2f}",
         "profit_factor": f"{stats['profit_factor']:.2f}",
@@ -291,7 +299,7 @@ def alerts_query(conn: sqlite3.Connection, status: str) -> dict[str, Any]:
         rows = conn.execute(
             "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status != 'resolved' ORDER BY a.starts_at DESC"
         ).fetchall()
-    active_count = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status != 'resolved'").fetchone()["n"]
+    active_count = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
     return {"items": [alert_view(row) for row in rows], "active_count": active_count}
 
 
@@ -491,10 +499,18 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         ).fetchall()
         account_ids = loads(row["accounts"], [])
         stats = runner_analytics(conn, runner_id)
+        initial_basis = float(row["initial_equity"] or 0)
+        if initial_basis <= 0:
+            first_point = conn.execute(
+                "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (runner_id,)
+            ).fetchone()
+            initial_basis = float(first_point["equity"]) if first_point else 0.0
+        total_pnl = float(row["equity"]) - initial_basis if initial_basis > 0 else 0.0
         return {
             "runner": runner_view(conn, row), "range": range_key,
             "metrics": {
                 "total_return_pct": f"{stats['total_return']:.2f}",
+                "total_pnl": f"{total_pnl:.2f}",
                 "annualized_return_pct": f"{stats['annualized_return']:.2f}",
                 "today_pnl": f"{float(row['today_pnl']):.2f}",
                 "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
@@ -527,7 +543,7 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         runners = [runner_view(conn, row) for row in runner_rows]
         total = sum(float(row["equity"]) for row in runner_rows)
         today = sum(float(row["today_pnl"]) for row in runner_rows)
-        active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status != 'resolved'").fetchone()["n"]
+        active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
         # 组合曲线按日收盘聚合：盘中高频点不会把夏普/年化指标放大。
         point_rows = conn.execute(
             "SELECT runner_id, ts, equity FROM equity_points ORDER BY ts LIMIT 5000"
@@ -783,6 +799,13 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (str(payload["msg"])[:200], runner["id"]))
         if isinstance(payload.get("equity"), (int, float)) and math.isfinite(float(payload["equity"])):
             equity = float(payload["equity"])
+            if float(runner["initial_equity"] or 0) <= 0 and equity > 0:
+                first_point = conn.execute(
+                    "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
+                    (runner["id"],),
+                ).fetchone()
+                baseline = float(first_point["equity"]) if first_point else equity
+                conn.execute("UPDATE runners SET initial_equity = ? WHERE id = ?", (baseline, runner["id"]))
             day_start = event_ts[:10] + "T00:00:00Z"
             prior = conn.execute(
                 "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",

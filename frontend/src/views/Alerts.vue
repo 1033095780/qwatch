@@ -2,7 +2,7 @@
 // Alerts.vue — 告警中心：心跳丢失 / 策略卡死（统一 P0 红色）· 活跃/历史 Tabs · 确认与静默。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NDropdown, useMessage } from 'naive-ui';
-import { BellOff, Check } from 'lucide-vue-next';
+import { AlertTriangle, BellOff, Check } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -22,6 +22,7 @@ const loading = ref(true);
 const error = ref('');
 const tab = ref('active');
 const busyId = ref('');
+const ackAllBusy = ref(false);
 
 const silenceOptions = [
   { label: '静默 1 小时', key: '1h' },
@@ -84,10 +85,27 @@ async function acknowledge(alert: Alert): Promise<void> {
     await api.ackAlert(alert.id);
     message.success('已确认告警：' + (RULE_LABEL[alert.rule] ?? alert.rule));
     await load();
+    window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
   } catch (err) {
     message.error(err instanceof Error ? err.message : '确认失败');
   } finally {
     busyId.value = '';
+  }
+}
+
+async function acknowledgeAll(): Promise<void> {
+  const firing = activeItems.value.filter((item) => item.status === 'firing');
+  if (!firing.length) return;
+  ackAllBusy.value = true;
+  try {
+    await Promise.all(firing.map((item) => api.ackAlert(item.id)));
+    message.success('已确认 ' + firing.length + ' 条 P0 告警');
+    await load();
+    window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '批量确认失败');
+  } finally {
+    ackAllBusy.value = false;
   }
 }
 
@@ -98,6 +116,7 @@ async function silence(alert: Alert, duration = '1h'): Promise<void> {
     const labels: Record<string, string> = { '1h': '1 小时', '4h': '4 小时', '24h': '24 小时' };
     message.success('已静默 ' + (labels[duration] ?? '1 小时'));
     await load();
+    window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
   } catch (err) {
     message.error(err instanceof Error ? err.message : '静默失败');
   } finally {
@@ -120,6 +139,19 @@ onMounted(() => load(true));
         <span class="chip">确认 / 静默立即生效</span>
       </template>
     </PageHeader>
+
+    <div v-if="firingCount > 0" class="alert-banner">
+      <div class="banner-main">
+        <span class="banner-icon"><AlertTriangle :size="18" /></span>
+        <div class="banner-text">
+          <strong>{{ firingCount }} 条 P0 告警待处理</strong>
+          <span>心跳丢失 / 策略卡死 · 建议立即确认并检查策略进程</span>
+        </div>
+      </div>
+      <n-button size="small" type="error" secondary :loading="ackAllBusy" @click="acknowledgeAll">
+        全部确认
+      </n-button>
+    </div>
 
     <section class="card alerts-card">
       <TabBar v-model="tab" :tabs="tabs" />
@@ -190,6 +222,53 @@ onMounted(() => load(true));
 </template>
 
 <style scoped>
+.alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 14px 18px;
+  border: 1px solid rgba(240, 68, 56, 0.35);
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(240, 68, 56, 0.16), rgba(240, 68, 56, 0.06));
+}
+.banner-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.banner-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  background: rgba(240, 68, 56, 0.2);
+  color: #ff8f86;
+  animation: bannerPulse 2s ease-in-out infinite;
+}
+@keyframes bannerPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 68, 56, 0.25); }
+  50% { box-shadow: 0 0 0 6px rgba(240, 68, 56, 0.08); }
+}
+.banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.banner-text strong {
+  color: #ffb4ad;
+  font-size: 13px;
+  font-weight: 600;
+}
+.banner-text span {
+  color: var(--text-2);
+  font-size: 11px;
+}
 .alerts-card {
   padding: 0 20px 16px;
 }
@@ -212,8 +291,8 @@ onMounted(() => load(true));
   position: relative;
   padding: 14px 16px 12px;
   border-radius: 10px;
-  border: 1px solid var(--border);
-  background: rgba(21, 28, 44, 0.5);
+  border: 1px solid rgba(240, 68, 56, 0.2);
+  background: rgba(240, 68, 56, 0.045);
   overflow: hidden;
   transition: border-color 150ms ease, background-color 150ms ease;
 }

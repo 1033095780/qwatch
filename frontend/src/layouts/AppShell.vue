@@ -101,6 +101,10 @@ function onRefresh(): void {
   loadAlertCount();
 }
 
+function onAlertsChanged(): void {
+  loadAlertCount();
+}
+
 function onMenuClick(): void {
   if (isMobile.value) drawerOpen.value = true;
   else settings.toggleCollapse();
@@ -130,6 +134,7 @@ onMounted(() => {
   mql = window.matchMedia('(max-width: 899px)');
   mql.addEventListener('change', applyViewport);
   window.addEventListener('keydown', onKeydown);
+  window.addEventListener('qwatch:alerts-changed', onAlertsChanged);
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 5000);
   alertTimer = window.setInterval(loadAlertCount, 60000);
   if (!auth.user) auth.fetchMe();
@@ -139,6 +144,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   mql?.removeEventListener('change', applyViewport);
   window.removeEventListener('keydown', onKeydown);
+  window.removeEventListener('qwatch:alerts-changed', onAlertsChanged);
   if (clockTimer) window.clearInterval(clockTimer);
   if (alertTimer) window.clearInterval(alertTimer);
 });
@@ -159,12 +165,13 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
           :key="item.to"
           :to="item.to"
           class="nav-item"
-          :class="{ active: isActive(item.to) }"
+          :class="{ active: isActive(item.to), 'has-alert': item.to === '/alerts' && alertCount > 0 }"
           :title="collapsed ? item.label : undefined"
         >
           <component :is="item.icon" :size="18" :stroke-width="1.7" class="nav-icon" />
           <span v-if="!collapsed" class="nav-label">{{ item.label }}</span>
           <span v-if="!collapsed && item.badge && alertCount > 0" class="nav-badge">{{ alertCount }}</span>
+          <span v-if="collapsed && item.badge && alertCount > 0" class="nav-alert-dot" />
         </router-link>
       </nav>
       <div class="sidebar-foot">
@@ -202,7 +209,26 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
           <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
             <RefreshCw :size="16" :class="{ spinning: apiMeta.pending > 0 }" />
           </button>
-          <button class="icon-btn bell" type="button" aria-label="告警中心" title="告警中心" @click="router.push('/alerts')">
+          <button
+            v-if="alertCount > 0"
+            type="button"
+            class="alert-pill"
+            aria-label="查看告警"
+            @click="router.push('/alerts')"
+          >
+            <Bell :size="13" />
+            <span class="alert-pill-tag">P0</span>
+            <strong>{{ alertCount }}</strong>
+            <span class="alert-pill-text">条告警</span>
+          </button>
+          <button
+            class="icon-btn bell"
+            :class="{ 'has-alerts': alertCount > 0 }"
+            type="button"
+            aria-label="告警中心"
+            title="告警中心"
+            @click="router.push('/alerts')"
+          >
             <Bell :size="17" />
             <span v-if="alertCount > 0" class="bell-dot">{{ alertCount > 9 ? '9+' : alertCount }}</span>
           </button>
@@ -320,6 +346,25 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   font-family: var(--font-mono);
   font-size: 10px;
 }
+.nav-item.has-alert {
+  background: rgba(240, 68, 56, 0.07);
+}
+.nav-item.has-alert .nav-icon {
+  color: #ff8f86;
+}
+.nav-item.has-alert.active {
+  border-color: rgba(240, 68, 56, 0.28);
+}
+.nav-alert-dot {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f04438;
+  box-shadow: 0 0 0 3px rgba(240, 68, 56, 0.16);
+}
 .sidebar-foot {
   display: flex;
   flex-direction: column;
@@ -379,6 +424,48 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   display: flex;
   align-items: center;
   gap: 10px;
+}
+.alert-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(240, 68, 56, 0.35);
+  background: rgba(240, 68, 56, 0.12);
+  color: #ffb4ad;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.alert-pill:hover {
+  background: rgba(240, 68, 56, 0.2);
+  border-color: rgba(240, 68, 56, 0.55);
+}
+.alert-pill-tag {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(240, 68, 56, 0.22);
+  color: #ff8f86;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+.alert-pill strong {
+  color: #ff8f86;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.bell.has-alerts {
+  color: #ff8f86;
+  background: rgba(240, 68, 56, 0.1);
+  border-color: rgba(240, 68, 56, 0.28);
+  animation: bellGlow 2s ease-in-out infinite;
+}
+@keyframes bellGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 68, 56, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(240, 68, 56, 0.12); }
 }
 .icon-btn {
   position: relative;
@@ -508,6 +595,12 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   }
 }
 @media (max-width: 899px) {
+  .alert-pill-text {
+    display: none;
+  }
+  .alert-pill {
+    padding: 0 7px;
+  }
   .sidebar {
     position: fixed;
     left: 0;

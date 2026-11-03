@@ -40,6 +40,12 @@ const range = ref<RangeKey>('all');
 const activeTab = ref('equity');
 const tokenOpen = ref(false);
 
+const signedMoney = (value: string): string => {
+  const number = Number(value);
+  const amount = fmtMoney(Math.abs(number));
+  return (number > 0 ? '+' : number < 0 ? '-' : '') + '¥' + amount;
+};
+
 const neverReported = computed(() => {
   const ts = detail.value ? Date.parse(detail.value.runner.last_heartbeat) : NaN;
   return !Number.isFinite(ts) || Date.now() - ts > 24 * 3600 * 1000;
@@ -131,7 +137,11 @@ onMounted(() => load(true));
       <div class="stats-grid">
         <MetricCard label="总权益" :value="'¥' + fmtMoney(detail.runner.equity)" sub="策略归因口径" />
         <MetricCard label="今日盈亏" :value="'¥' + fmtMoney(detail.metrics.today_pnl)" :change="detail.metrics.today_pnl" :change-pct="detail.runner.today_pnl_pct" sub="今日" />
-        <MetricCard label="累计收益" :value="fmtPct(detail.metrics.total_return_pct)" :change="detail.metrics.total_return_pct" :change-pct="null" sub="策略归因口径" />
+        <MetricCard
+          label="累计盈亏"
+          :value="signedMoney(detail.metrics.total_pnl)"
+          :sub="'回报 ' + fmtPct(detail.metrics.total_return_pct) + ' · 策略归因口径'"
+        />
         <MetricCard
           label="心跳"
           :value="neverReported ? '尚未上报' : fromNow(detail.runner.last_heartbeat)"
