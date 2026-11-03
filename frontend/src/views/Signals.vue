@@ -311,7 +311,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <td class="td-num">{{ signal.qty }}</td>
               <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
               <td><SignalStatusTag :status="signal.status" /></td>
-              <td class="truncate muted"><router-link :to="'/accounts/' + signal.account_id" class="cell-link muted">{{ signal.account_name }}</router-link></td>
+              <td class="truncate muted">{{ signal.account_name }}</td>
             </tr>
           </tbody>
         </table>

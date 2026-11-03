@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// TokenCreateModal.vue — 申请策略接入令牌：单步表单；创建成功后结果态只展示一次完整 token。
+// StrategyCreateModal.vue — 新建策略：一步创建 Runner 并自动生成接入令牌；令牌只展示一次。
 import { computed, reactive, ref, watch } from 'vue';
 import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui';
 import type { FormInst, FormRules } from 'naive-ui';
-import { AlertTriangle, Copy, KeyRound } from 'lucide-vue-next';
+import { AlertTriangle, CheckCircle2, Copy, KeyRound } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Market, Platform, StrategyType, TokenCreateResult } from '@/api/types';
-import { PLATFORM_OPTIONS, STRATEGY_TYPE_OPTIONS, TOKEN_MARKET_OPTIONS, parseTags } from '@/utils/catalog';
+import type { Account, Market, Platform, StrategyToken, StrategyType } from '@/api/types';
+import { PLATFORM_OPTIONS, STRATEGY_TYPE_OPTIONS, TOKEN_MARKET_OPTIONS } from '@/utils/catalog';
+import { heartbeatCurl } from '@/utils/integration';
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ 'update:show': [value: boolean]; created: [] }>();
@@ -14,39 +15,56 @@ const emit = defineEmits<{ 'update:show': [value: boolean]; created: [] }>();
 const message = useMessage();
 const formRef = ref<FormInst | null>(null);
 const submitting = ref(false);
-const result = ref<TokenCreateResult | null>(null);
+const accounts = ref<Account[]>([]);
+const result = ref<{ token: string; record: StrategyToken } | null>(null);
 
 const form = reactive({
   name: '',
   platform: null as Platform | null,
-  markets: [] as Market[],
+  market: null as Market | null,
   strategyType: null as StrategyType | null,
+  accounts: [] as string[],
   tags: '',
-  note: '',
 });
 
 const rules: FormRules = {
   name: { required: true, message: '策略名称必填', trigger: ['blur', 'input'] },
 };
 
+const accountOptions = computed(() => accounts.value.map((a) => ({ label: a.name + '（' + a.id + '）', value: a.id })));
+const marketOptions = TOKEN_MARKET_OPTIONS;
+const preview = computed(() => (result.value ? heartbeatCurl(result.value.token, result.value.record.name) : ''));
+
 function randomName(): string {
   return 'strategy-' + Math.random().toString(16).slice(2, 6);
 }
 
-watch(() => props.show, (visible) => {
+watch(() => props.show, async (visible) => {
   if (!visible) return;
   form.name = randomName();
   form.platform = null;
-  form.markets = [];
+  form.market = null;
   form.strategyType = null;
+  form.accounts = [];
   form.tags = '';
-  form.note = '';
   result.value = null;
   formRef.value?.restoreValidation();
+  if (!accounts.value.length) {
+    try {
+      accounts.value = (await api.accounts()).items;
+    } catch {
+      accounts.value = [];
+    }
+  }
 });
 
 function close(): void {
   emit('update:show', false);
+}
+
+function parseTags(text: string): string[] {
+  const seen = new Set<string>();
+  return text.split(/[,，]/).map((t) => t.trim()).filter((t) => t && !seen.has(t) && seen.add(t));
 }
 
 async function submit(): Promise<void> {
@@ -57,33 +75,32 @@ async function submit(): Promise<void> {
   }
   submitting.value = true;
   try {
-    result.value = await api.createToken({
+    const tags = parseTags(form.tags);
+    const runnerRes = await api.createRunner({
       name: form.name.trim(),
       platform: form.platform ?? '',
-      markets: form.markets,
+      market: form.market ?? '',
       strategy_type: form.strategyType ?? '',
-      tags: parseTags(form.tags),
-      note: form.note.trim(),
+      tags,
+      accounts: form.accounts,
+    });
+    const runner = runnerRes.runner;
+    result.value = await api.createToken({
+      runner_id: runner.id,
+      name: runner.name,
+      platform: runner.platform,
+      markets: [runner.market],
+      strategy_type: runner.strategy_type,
+      tags,
     });
     emit('created');
-    message.success('令牌创建成功，请立即保存完整令牌');
+    message.success('策略已创建，请保存接入令牌');
   } catch (err) {
-    message.error(err instanceof Error ? err.message : '令牌创建失败');
+    message.error(err instanceof Error ? err.message : '创建策略失败');
   } finally {
     submitting.value = false;
   }
 }
-
-const integrationExample = computed(() => {
-  if (!result.value) return '';
-  const origin = typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8080';
-  return [
-    'curl -X POST ' + origin + '/api/v1/heartbeat \\',
-    '  -H "Authorization: Bearer ' + result.value.token + '" \\',
-    '  -H "Content-Type: application/json" \\',
-    "  -d '{\"runner_id\":\"" + result.value.record.name + "\",\"seq\":1,\"state\":\"running\",\"loop_count\":1}'",
-  ].join('\n');
-});
 
 async function copyToken(): Promise<void> {
   if (!result.value) return;
@@ -100,16 +117,16 @@ async function copyToken(): Promise<void> {
   <n-modal
     :show="show"
     preset="card"
-    :title="result ? '令牌创建成功' : '申请策略接入令牌'"
-    style="width: 560px; max-width: calc(100vw - 32px)"
+    :title="result ? '策略创建成功' : '新建策略'"
+    style="width: 580px; max-width: calc(100vw - 32px)"
     :mask-closable="false"
     @update:show="emit('update:show', $event)"
   >
     <template v-if="!result">
-      <p class="modal-note">策略通过 Bearer Token 上报心跳与信号；名称必填，其余用于接入校验与筛选，可留空。</p>
+      <p class="modal-note">创建后会立即生成接入令牌；策略保持「离线」状态，收到第一次心跳后自动上线。名称必填，其余可留空。</p>
       <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" require-mark-placement="right-hanging">
         <n-form-item label="策略名称" path="name">
-          <n-input v-model:value="form.name" placeholder="如 strategy-8f3a" maxlength="40" />
+          <n-input v-model:value="form.name" placeholder="如 螺纹钢趋势" maxlength="40" />
         </n-form-item>
         <div class="form-grid">
           <n-form-item label="量化平台">
@@ -118,29 +135,29 @@ async function copyToken(): Promise<void> {
           <n-form-item label="策略类型">
             <n-select v-model:value="form.strategyType" :options="STRATEGY_TYPE_OPTIONS" clearable placeholder="可选" />
           </n-form-item>
+          <n-form-item label="市场">
+            <n-select v-model:value="form.market" :options="marketOptions" clearable placeholder="可选" />
+          </n-form-item>
+          <n-form-item label="关联账户">
+            <n-select v-model:value="form.accounts" :options="accountOptions" multiple clearable placeholder="可选，可多选" />
+          </n-form-item>
         </div>
-        <n-form-item label="市场">
-          <n-select v-model:value="form.markets" :options="TOKEN_MARKET_OPTIONS" multiple clearable placeholder="可选，可多选" />
-        </n-form-item>
         <n-form-item label="标签">
           <n-input v-model:value="form.tags" placeholder="逗号分隔，如 夜盘,期货主账户（可选）" />
-        </n-form-item>
-        <n-form-item label="备注">
-          <n-input v-model:value="form.note" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="可选" />
         </n-form-item>
       </n-form>
     </template>
 
     <template v-else>
-      <div class="result-head"><KeyRound :size="16" /><span>{{ result.record.name }}</span></div>
-      <p class="result-label">完整令牌</p>
+      <div class="result-head"><CheckCircle2 :size="16" /><span>{{ result.record.name }}</span></div>
+      <p class="result-label">接入令牌（只显示一次）</p>
       <div class="token-box mono">{{ result.token }}</div>
       <div class="warn">
         <AlertTriangle :size="14" />
-        <span>此令牌只显示一次，请立即保存。关闭弹窗后将无法再次查看，只能重新申请。</span>
+        <span>请立即保存。关闭弹窗后无法再次查看完整令牌，只能在策略详情里重新生成。</span>
       </div>
       <p class="result-label">接入示例（心跳）</p>
-      <pre class="code-block mono">{{ integrationExample }}</pre>
+      <pre class="code-block mono">{{ preview }}</pre>
       <p class="code-note">信号批量上报：POST /api/v1/events，同样使用该 Bearer Token。</p>
     </template>
 
@@ -148,7 +165,7 @@ async function copyToken(): Promise<void> {
       <div class="footer-actions">
         <template v-if="!result">
           <n-button size="small" @click="close">取消</n-button>
-          <n-button size="small" type="primary" :loading="submitting" @click="submit">创建令牌</n-button>
+          <n-button size="small" type="primary" :loading="submitting" @click="submit">创建策略</n-button>
         </template>
         <template v-else>
           <n-button size="small" @click="copyToken">

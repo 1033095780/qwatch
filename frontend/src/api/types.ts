@@ -28,6 +28,15 @@ export interface RunnerAccount {
   venue: string;
 }
 
+export interface RunnerCreateRequest {
+  name: string;
+  platform?: Platform | '';
+  market?: Market | '';
+  strategy_type?: StrategyType | '';
+  tags?: string[];
+  accounts?: string[];
+}
+
 export interface Runner {
   id: string;
   name: string;
@@ -202,24 +211,6 @@ export interface Account {
   runner_ids: string[];
 }
 
-export interface CashFlow {
-  id: string;
-  ts: string;
-  amount: string;
-  currency: string;
-  kind: 'deposit' | 'withdraw' | string;
-  note: string;
-}
-
-export interface AccountDetail {
-  account: Account & { initial_equity: string };
-  equity: EquityPoint[];
-  positions: Position[];
-  cash_flows: CashFlow[];
-  signals: Signal[];
-  total_return_pct: string;
-}
-
 export interface ListResponse<T> {
   items: T[];
   total?: number;
@@ -284,6 +275,7 @@ export interface ChannelPatch {
 
 export interface StrategyToken {
   id: string;
+  runner_id: string | null;
   name: string;
   platform: Platform | '';
   platform_label: string;
@@ -306,6 +298,7 @@ export interface TokensResponse {
 
 export interface TokenCreateRequest {
   name: string;
+  runner_id?: string;
   platform?: Platform | '';
   markets?: Market[];
   strategy_type?: StrategyType | '';

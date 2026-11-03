@@ -1,44 +1,30 @@
 <script setup lang="ts">
-// Settings.vue — 设置：通知渠道（钉钉编辑/测试）、策略接入令牌（申请/复制/吊销）、交易日历、安全、关于 + 涨跌配色。
+// Settings.vue — 设置：通知渠道（钉钉编辑/测试）、交易日历、安全、关于 + 涨跌配色。
 import { computed, onMounted, ref, watch } from 'vue';
-import {
-  NButton, NSwitch, NTooltip, useDialog, useMessage,
-} from 'naive-ui';
-import {
-  Ban, BellRing, Copy, Pencil, Plus, Send, ShieldCheck,
-} from 'lucide-vue-next';
+import { NButton, NSwitch, NTooltip, useMessage } from 'naive-ui';
+import { BellRing, Pencil, Send, ShieldCheck } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Channel, StrategyToken, TestChannelResult, UpColorScheme } from '@/api/types';
+import type { Channel, TestChannelResult, UpColorScheme } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
-import { MARKET_LABELS } from '@/utils/catalog';
-import { fmtDateTime, fromNow } from '@/utils/format';
+import { fmtDateTime } from '@/utils/format';
 import ChannelEditModal from '@/components/ChannelEditModal.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusDot from '@/components/StatusDot.vue';
 import TabBar from '@/components/TabBar.vue';
-import TokenCreateModal from '@/components/TokenCreateModal.vue';
 import type { TabItem } from '@/components/TabBar.vue';
 
 const store = useSettingsStore();
 const message = useMessage();
-const dialog = useDialog();
-
 const tab = ref('channels');
 const busyChannel = ref('');
 const testResult = ref<Record<string, TestChannelResult>>({});
-const revoking = ref('');
 
-const tokens = ref<StrategyToken[]>([]);
-const tokensLoading = ref(true);
-const tokensError = ref('');
-const tokenModal = ref(false);
 const channelModal = ref(false);
 const editingChannel = ref<Channel | null>(null);
 
 const tabs: TabItem[] = [
   { key: 'channels', label: '通知渠道' },
-  { key: 'tokens', label: '策略令牌' },
   { key: 'calendars', label: '交易日历' },
   { key: 'security', label: '安全' },
   { key: 'about', label: '关于' },
@@ -77,53 +63,9 @@ async function onTestChannel(channel: Channel): Promise<void> {
   }
 }
 
-const activeTokenCount = computed(() => tokens.value.filter((t) => t.status === 'active').length);
-
-async function loadTokens(): Promise<void> {
-  tokensLoading.value = true;
-  tokensError.value = '';
-  try {
-    tokens.value = (await api.tokens()).items;
-  } catch (err) {
-    tokensError.value = err instanceof Error ? err.message : '令牌列表加载失败';
-  } finally {
-    tokensLoading.value = false;
-  }
-}
-
 function openChannelEdit(channel: Channel): void {
   editingChannel.value = channel;
   channelModal.value = true;
-}
-
-async function copyPrefix(token: StrategyToken): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(token.token_prefix);
-    message.info('已复制令牌前缀（完整令牌仅在创建时展示）');
-  } catch {
-    message.error('复制失败，请手动选择文本');
-  }
-}
-
-function revokeToken(token: StrategyToken): void {
-  dialog.warning({
-    title: '吊销令牌',
-    content: '吊销「' + token.name + '」后，使用该令牌上报心跳与信号的策略将立即失败，且不可恢复。',
-    positiveText: '确认吊销',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      revoking.value = token.id;
-      try {
-        await api.revokeToken(token.id);
-        message.success('令牌已吊销');
-        await loadTokens();
-      } catch (err) {
-        message.error(err instanceof Error ? err.message : '吊销失败');
-      } finally {
-        revoking.value = '';
-      }
-    },
-  });
 }
 
 async function changeScheme(scheme: UpColorScheme): Promise<void> {
@@ -133,12 +75,10 @@ async function changeScheme(scheme: UpColorScheme): Promise<void> {
 
 watch(() => store.refreshSeq, () => {
   store.load(true);
-  loadTokens();
 });
 
 onMounted(() => {
   store.load();
-  loadTokens();
 });
 </script>
 
@@ -218,87 +158,6 @@ onMounted(() => {
             </article>
           </div>
           <p class="panel-note">Webhook 与加签密钥保存后不再回显，页面只展示掩码；测试发送会向该渠道发一条测试消息。</p>
-        </div>
-
-        <!-- 策略令牌 -->
-        <div v-show="tab === 'tokens'" class="panel">
-          <div class="panel-head">
-            <div>
-              <h2 class="panel-title">策略接入令牌</h2>
-              <p class="panel-sub">策略通过 Bearer Token 上报心跳与信号；令牌与策略名称 / 平台 / 市场 / 类型绑定，用于接入校验。完整令牌只显示一次。</p>
-            </div>
-            <div class="panel-actions">
-              <span class="chip">{{ activeTokenCount }} 个有效</span>
-              <n-button size="small" type="primary" @click="tokenModal = true">
-                <template #icon><Plus :size="14" /></template>
-                申请令牌
-              </n-button>
-            </div>
-          </div>
-
-          <div v-if="tokensLoading" class="token-loading">
-            <div v-for="i in 3" :key="i" class="skel skel-line" style="height: 34px; margin-bottom: 10px" />
-          </div>
-          <div v-else-if="tokensError" class="error-bar">
-            <span class="dot" />{{ tokensError }}
-            <n-button text size="tiny" @click="loadTokens">重试</n-button>
-          </div>
-          <EmptyState v-else-if="!tokens.length" title="还没有策略令牌" description="策略接入前先申请一个令牌；完整令牌只显示一次">
-            <template #action>
-              <n-button size="small" @click="tokenModal = true">申请令牌</n-button>
-            </template>
-          </EmptyState>
-          <div v-else class="tbl-wrap">
-            <table class="tbl tbl--compact">
-              <thead>
-                <tr>
-                  <th>策略名</th><th>平台</th><th>市场</th><th>类型</th><th>标签</th><th>令牌</th>
-                  <th>状态</th><th>最近使用</th><th class="th-num">请求数</th><th class="th-num">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="token in tokens" :key="token.id">
-                  <td class="cell-strong">
-                    {{ token.name }}
-                    <span v-if="token.note" class="token-note">{{ token.note }}</span>
-                  </td>
-                  <td class="muted nowrap">{{ token.platform_label || '—' }}</td>
-                  <td>
-                    <span v-if="!token.markets.length" class="faint">—</span>
-                    <template v-else>
-                      <span v-for="market in token.markets" :key="market" class="chip chip--soft">{{ MARKET_LABELS[market] }}</span>
-                    </template>
-                  </td>
-                  <td class="muted nowrap">{{ token.strategy_type_label || '—' }}</td>
-                  <td>
-                    <span v-if="!token.tags.length" class="faint">—</span>
-                    <template v-else>
-                      <span v-for="tag in token.tags" :key="tag" class="chip chip--soft">#{{ tag }}</span>
-                    </template>
-                  </td>
-                  <td class="mono nowrap">{{ token.token_prefix }}</td>
-                  <td>
-                    <span class="token-status" :class="{ revoked: token.status !== 'active' }">{{ token.status === 'active' ? '有效' : '已吊销' }}</span>
-                  </td>
-                  <td class="mono faint nowrap">{{ token.last_used_at ? fromNow(token.last_used_at) : '—' }}</td>
-                  <td class="td-num mono">{{ token.request_count.toLocaleString('zh-CN') }}</td>
-                  <td class="td-num">
-                    <div class="row-actions">
-                      <n-button size="tiny" :disabled="token.status !== 'active'" @click="copyPrefix(token)">
-                        <template #icon><Copy :size="12" /></template>
-                        复制前缀
-                      </n-button>
-                      <n-button size="tiny" quaternary :disabled="token.status !== 'active'" :loading="revoking === token.id" @click="revokeToken(token)">
-                        <template #icon><Ban :size="12" /></template>
-                        吊销
-                      </n-button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <p class="panel-note">服务端只保存令牌哈希，按最小权限校验并记录最近使用；完整令牌仅在创建时展示一次。</p>
         </div>
 
         <!-- 交易日历 -->
@@ -419,8 +278,6 @@ onMounted(() => {
         </div>
       </section>
     </template>
-
-    <TokenCreateModal v-model:show="tokenModal" @created="loadTokens" />
     <ChannelEditModal v-model:show="channelModal" :channel="editingChannel" />
   </div>
 </template>

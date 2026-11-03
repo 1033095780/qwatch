@@ -614,7 +614,7 @@ function runnerView(def) {
     accounts: def.accounts.map((id) => ({ id, name: accountMap[id].name, venue: accountMap[id].venue })),
     equity: money(def.equity),
     today_pnl: money(def.today_pnl),
-    today_pnl_pct: num((def.today_pnl / (def.equity - def.today_pnl)) * 100),
+    today_pnl_pct: num(def.equity - def.today_pnl !== 0 ? (def.today_pnl / (def.equity - def.today_pnl)) * 100 : 0),
     total_return_pct: num(def.total_return_pct),
     max_drawdown_pct: num(def.max_drawdown_pct),
     uptime_24h: num(def.uptime_24h, 2),
@@ -860,21 +860,23 @@ function tokenView(record) {
 
 const tokens = [
   {
-    id: 'tok_8f3a2b7d', name: 'cta_rb 生产接入', platform: 'qmt', markets: ['CN_FUT'], strategy_type: 'trend',
+    id: 'tok_8f3a2b7d', runner_id: 'cta_rb-prod', name: 'cta_rb 生产接入', platform: 'qmt', markets: ['CN_FUT'], strategy_type: 'trend',
     tags: ['期货主账户', '夜盘'], note: '主力策略接入令牌，轮换周期 90 天',
     token_prefix: 'qw_8f3a…0c21', status: 'active',
     created_at: ISO(NOW - 88 * DAY), last_used_at: ISO(NOW - 4 * 1000), request_count: 128430,
   },
   {
-    id: 'tok_4c81de09', name: 'cta_if 仿真接入', platform: 'ptrade', markets: ['CN_FUT'], strategy_type: 'intraday',
+    id: 'tok_4c81de09', runner_id: 'cta_if-intraday', name: 'cta_if 仿真接入', platform: 'ptrade', markets: ['CN_FUT'], strategy_type: 'intraday',
     tags: ['股指', '日内'], note: '仿真环境令牌，已按计划轮换',
     token_prefix: 'qw_4c81…e09b', status: 'revoked',
     created_at: ISO(NOW - 61 * DAY), last_used_at: ISO(NOW - 12 * DAY), request_count: 2150,
   },
 ];
 
-export function getTokens() {
-  return { items: tokens.map(tokenView), total: tokens.length };
+export function getTokens(query = {}) {
+  let items = tokens;
+  if (query.runner_id) items = items.filter((t) => t.runner_id === query.runner_id);
+  return { items: items.map(tokenView), total: items.length };
 }
 
 export function createToken(body) {
@@ -884,6 +886,7 @@ export function createToken(body) {
   const token = randomBytes(32).toString('hex');
   const record = {
     id: 'tok_' + randomBytes(4).toString('hex'),
+    runner_id: String(payload.runner_id || '').trim() || null,
     name,
     platform: PLATFORM_VALUES.includes(payload.platform) ? payload.platform : '',
     markets: Array.isArray(payload.markets) ? payload.markets.filter((m) => TOKEN_MARKET_VALUES.includes(m)) : [],
@@ -905,6 +908,61 @@ export function revokeToken(id) {
   if (!record) return null;
   record.status = 'revoked';
   return tokenView(record);
+}
+
+// ---------- 新建策略（Runner）：默认离线、权益 0，等待首次心跳上报 ----------
+let createdRunnerSeq = 0;
+export function createRunner(body) {
+  const payload = body && typeof body === 'object' ? body : {};
+  const name = String(payload.name || '').trim();
+  if (!name) return { error: '策略名称必填' };
+  if (RUNNER_DEFS.some((r) => r.name === name)) return { error: '策略名称已存在' };
+
+  const platform = PLATFORM_VALUES.includes(payload.platform) ? payload.platform : 'custom';
+  const strategyType = STRATEGY_TYPE_VALUES.includes(payload.strategy_type) ? payload.strategy_type : 'other';
+  const market = ['CN_A', 'CN_FUT', 'HK', 'US', 'CRYPTO', 'FX'].includes(payload.market) ? payload.market : 'CN_A';
+  const accountIds = Array.isArray(payload.accounts) ? payload.accounts.filter((id) => !!accountMap[id]) : [];
+  const venue = accountIds.length
+    ? accountMap[accountIds[0]].venue
+    : market === 'CN_A' ? 'XSHG' : market === 'CN_FUT' ? 'XSGE' : 'XSHG';
+  const id = 'runner-' + randomBytes(3).toString('hex');
+  const seed = 300 + (createdRunnerSeq += 1);
+  const tags = Array.isArray(payload.tags)
+    ? payload.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8)
+    : [];
+
+  const def = {
+    id, name, strategy: 'me/' + id.replace('runner-', 'strategy_'), version: '0.1.0',
+    market, venue, platform, strategy_type: strategyType, tags,
+    status: 'offline', accounts: accountIds,
+    equity: 0, today_pnl: 0, total_return_pct: 0, max_drawdown_pct: 0,
+    uptime_24h: 0, last_heartbeat_ago: 365 * DAY, heartbeat_every: 10,
+    sharpe: 0, win_rate_pct: 0, uptime_30d: 0, initial: 0, seed,
+  };
+  RUNNER_DEFS.push(def);
+  runnerMap[id] = def;
+
+  const curve = [];
+  for (let i = 179; i >= 0; i -= 1) {
+    curve.push({ ts: Date.now() - i * DAY, nav: 1, value: 0 });
+  }
+  runnerCurves[id] = curve;
+
+  const timeline = [];
+  for (let i = 47; i >= 0; i -= 1) {
+    timeline.push({ ts: ISO(Date.now() - i * 30 * MIN), status: 'off' });
+  }
+  runnerDetailsBase[id] = {
+    metrics: {
+      total_return_pct: num(0), today_pnl: money(0), max_drawdown_pct: num(0),
+      sharpe: num(0), win_rate_pct: num(0, 1), uptime_30d: num(0),
+    },
+    positions: [],
+    heartbeat_timeline: timeline,
+    outages: [],
+  };
+
+  return { runner: runnerView(def) };
 }
 
 export function testChannel(id) {

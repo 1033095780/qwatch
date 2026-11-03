@@ -6,7 +6,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { NDropdown, useMessage } from 'naive-ui';
 import {
   Activity, Bell, FileText, LayoutDashboard, LogOut, Menu, PanelLeftClose,
-  PanelLeftOpen, Radio, RefreshCw, Settings as SettingsIcon, Wallet,
+  PanelLeftOpen, Radio, RefreshCw, Settings as SettingsIcon,
 } from 'lucide-vue-next';
 import { api, apiMeta } from '@/api/client';
 import { useAuthStore } from '@/stores/auth';
@@ -20,7 +20,6 @@ interface NavItem { to: string; label: string; icon: Component; badge?: boolean 
 const navItems: NavItem[] = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
   { to: '/strategies', label: '策略', icon: Activity },
-  { to: '/accounts', label: '账户', icon: Wallet },
   { to: '/signals', label: '信号', icon: Radio },
   { to: '/alerts', label: '告警', icon: Bell, badge: true },
   { to: '/reports', label: '日报', icon: FileText },

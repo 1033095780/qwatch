@@ -2,8 +2,8 @@
 // StrategyDetail.vue — 策略详情：状态头、6 KPI、Tabs（净值/信号/持仓/心跳/告警/配置）。
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { NButton, useMessage } from 'naive-ui';
-import { ArrowUpRight } from 'lucide-vue-next';
+import { NButton } from 'naive-ui';
+import { ArrowUpRight, KeyRound } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -23,6 +23,7 @@ import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import SideTag from '@/components/SideTag.vue';
 import SignalStatusTag from '@/components/SignalStatusTag.vue';
+import StrategyTokenModal from '@/components/StrategyTokenModal.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import MarketTag from '@/components/MarketTag.vue';
 import TabBar from '@/components/TabBar.vue';
@@ -30,7 +31,6 @@ import type { TabItem } from '@/components/TabBar.vue';
 
 const route = useRoute();
 const settings = useSettingsStore();
-const message = useMessage();
 
 const runnerId = computed(() => String(route.params.id || ''));
 const detail = ref<RunnerDetail | null>(null);
@@ -39,6 +39,12 @@ const refreshing = ref(false);
 const error = ref('');
 const range = ref<RangeKey>('all');
 const activeTab = ref('equity');
+const tokenOpen = ref(false);
+
+const neverReported = computed(() => {
+  const ts = detail.value ? Date.parse(detail.value.runner.last_heartbeat) : NaN;
+  return !Number.isFinite(ts) || Date.now() - ts > 24 * 3600 * 1000;
+});
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'equity', label: '净值' },
@@ -73,16 +79,6 @@ async function load(initial = false): Promise<void> {
   }
 }
 
-async function copyId(): Promise<void> {
-  const text = detail.value ? detail.value.runner.strategy + '@' + detail.value.runner.version + ' (' + detail.value.runner.id + ')' : runnerId.value;
-  try {
-    await navigator.clipboard.writeText(text);
-    message.success('已复制策略标识');
-  } catch {
-    message.error('复制失败，请手动选择文本复制');
-  }
-}
-
 watch(range, () => load());
 watch(() => settings.refreshSeq, () => load());
 
@@ -111,7 +107,7 @@ onMounted(() => load(true));
     <template v-else-if="detail">
       <PageHeader
         :title="detail.runner.name"
-        :subtitle="detail.runner.strategy + '@' + detail.runner.version + ' · ' + detail.runner.venue + ' · 最后心跳 ' + fromNow(detail.runner.last_heartbeat)"
+        :subtitle="detail.runner.strategy + '@' + detail.runner.version + ' · ' + detail.runner.venue + ' · ' + (neverReported ? '尚未接入，等待第一次心跳' : '最后心跳 ' + fromNow(detail.runner.last_heartbeat))"
         back-to="/strategies"
         back-label="策略列表"
       >
@@ -121,6 +117,10 @@ onMounted(() => load(true));
           <span v-if="detail.runner.platform_label" class="chip">{{ detail.runner.platform_label }}</span>
           <span v-if="detail.runner.strategy_type_label" class="chip">{{ detail.runner.strategy_type_label }}</span>
           <span v-for="tag in detail.runner.tags" :key="tag" class="chip chip--soft">#{{ tag }}</span>
+          <n-button size="small" @click="tokenOpen = true">
+            <template #icon><KeyRound :size="13" /></template>
+            接入令牌
+          </n-button>
           <n-button size="small" tag="a" :href="'/signals?runner_id=' + detail.runner.id" @click.prevent="$router.push('/signals?runner_id=' + detail.runner.id)">
             <template #icon><ArrowUpRight :size="13" /></template>
             查看信号
@@ -141,8 +141,8 @@ onMounted(() => load(true));
         <MetricCard label="胜率" :value="detail.metrics.win_rate_pct + '%'" :sub="'近 30 天可用率 ' + detail.metrics.uptime_30d + '%'" />
         <MetricCard
           label="心跳"
-          :value="fromNow(detail.runner.last_heartbeat)"
-          :sub="'间隔 ' + detail.config.heartbeat_interval_s + 's · seq ' + detail.config.last_seq"
+          :value="neverReported ? '尚未上报' : fromNow(detail.runner.last_heartbeat)"
+          :sub="neverReported ? '等待第一次心跳' : '间隔 ' + detail.config.heartbeat_interval_s + 's · seq ' + detail.config.last_seq"
         />
       </div>
 
@@ -320,6 +320,8 @@ onMounted(() => load(true));
           </dl>
         </div>
       </section>
+
+      <StrategyTokenModal v-model:show="tokenOpen" :runner="detail.runner" />
     </template>
   </div>
 </template>

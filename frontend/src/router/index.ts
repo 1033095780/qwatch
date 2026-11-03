@@ -33,11 +33,8 @@ const router = createRouter({
           path: 'strategies/:id', name: 'strategy-detail', component: () => import('@/views/StrategyDetail.vue'),
           meta: { title: '策略详情', parent: { title: '策略', to: '/strategies' } },
         },
-        { path: 'accounts', name: 'accounts', component: () => import('@/views/Accounts.vue'), meta: { title: '账户' } },
-        {
-          path: 'accounts/:id', name: 'account-detail', component: () => import('@/views/AccountDetail.vue'),
-          meta: { title: '账户详情', parent: { title: '账户', to: '/accounts' } },
-        },
+        { path: 'accounts', redirect: '/strategies' },
+        { path: 'accounts/:id', redirect: '/strategies' },
         { path: 'signals', name: 'signals', component: () => import('@/views/Signals.vue'), meta: { title: '交易信号' } },
         { path: 'trades', redirect: (to) => ({ path: '/signals', query: to.query }) },
         { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警中心' } },

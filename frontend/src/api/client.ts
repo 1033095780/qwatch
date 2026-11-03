@@ -1,8 +1,8 @@
 // api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记。
 import { reactive } from 'vue';
 import type {
-  Account, AccountDetail, Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
-  LoginResponse, Report, ReportSummary, Runner, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
+  Account, Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
+  LoginResponse, Report, ReportSummary, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
   SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
   ListResponse,
 } from './types';
@@ -113,17 +113,17 @@ export const api = {
   runner(id: string, range: RangeKey = 'all') {
     return request<RunnerDetail>('/runners/' + encodeURIComponent(id) + qs({ range }));
   },
+  createRunner(body: RunnerCreateRequest) {
+    return request<{ runner: Runner }>('/runners', { method: 'POST', body: JSON.stringify(body) });
+  },
   accounts() {
     return request<ListResponse<Account>>('/accounts');
-  },
-  account(id: string) {
-    return request<AccountDetail>('/accounts/' + encodeURIComponent(id));
   },
   signals(query: SignalQuery = {}) {
     return request<SignalsResponse>('/signals' + qs(query as Record<string, string | number | undefined>));
   },
-  tokens() {
-    return request<TokensResponse>('/tokens');
+  tokens(params: { runner_id?: string } = {}) {
+    return request<TokensResponse>('/tokens' + qs(params));
   },
   createToken(body: TokenCreateRequest) {
     return request<TokenCreateResult>('/tokens', { method: 'POST', body: JSON.stringify(body) });

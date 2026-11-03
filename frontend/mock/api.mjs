@@ -1,6 +1,6 @@
 // mock/api.mjs — qwatch mock API（/api/v1）：被 Vite dev 中间件与 mock-server.mjs 共用。
 import {
-  getOverview, getRunners, getRunnerDetail, getAccounts, getAccountDetail,
+  getOverview, getRunners, getRunnerDetail, createRunner, getAccounts, getAccountDetail,
   getSignals, getPositions, getAlerts, acknowledgeAlert, silenceAlert,
   getReports, getReport, getSettings, saveSettings, testChannel,
   getTokens, createToken, revokeToken, mockMeta,
@@ -80,6 +80,13 @@ export async function handleApi(req, res) {
       send(res, 200, getRunners(query));
       return true;
     }
+    if (method === 'POST' && route === '/runners') {
+      const body = await readBody(req);
+      const result = createRunner(body);
+      if (result.error) { send(res, 400, { detail: result.error }); return true; }
+      send(res, 201, result);
+      return true;
+    }
 
     const runnerMatch = route.match(/^\/runners\/([^/]+)$/);
     if (method === 'GET' && runnerMatch) {
@@ -142,7 +149,7 @@ export async function handleApi(req, res) {
     }
 
     if (method === 'GET' && route === '/tokens') {
-      send(res, 200, getTokens());
+      send(res, 200, getTokens(query));
       return true;
     }
     if (method === 'POST' && route === '/tokens') {

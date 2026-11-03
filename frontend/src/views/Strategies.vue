@@ -2,13 +2,14 @@
 // Strategies.vue — 策略列表：搜索 + 状态/市场/平台/类型/标签/账户筛选 + 卡片网格 + 空状态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
-import { Search, SlidersHorizontal } from 'lucide-vue-next';
+import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Account, Runner, RunnerStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import RunnerCard from '@/components/RunnerCard.vue';
+import StrategyCreateModal from '@/components/StrategyCreateModal.vue';
 
 const settings = useSettingsStore();
 
@@ -16,6 +17,7 @@ const runners = ref<Runner[]>([]);
 const accounts = ref<Account[]>([]);
 const loading = ref(true);
 const error = ref('');
+const createOpen = ref(false);
 
 const keyword = ref('');
 const statusFilter = ref<RunnerStatus | 'all'>('all');
@@ -109,6 +111,12 @@ onMounted(() => load(true));
 <template>
   <div class="page">
     <PageHeader title="策略" :subtitle="'运行实例与状态 · 共 ' + runners.length + ' 个 · 告警与心跳按交易日历判定'">
+      <template #extra>
+        <n-button type="primary" size="small" @click="createOpen = true">
+          <template #icon><Plus :size="14" /></template>
+          新建策略
+        </n-button>
+      </template>
     </PageHeader>
 
     <section class="card toolbar">
@@ -142,7 +150,7 @@ onMounted(() => load(true));
     <EmptyState
       v-else-if="!filtered.length"
       title="没有匹配的策略"
-      :description="hasFilter ? '试着放宽筛选条件，或清空搜索关键词' : '还没有 Runner 上报数据'"
+      :description="hasFilter ? '试着放宽筛选条件，或清空搜索关键词' : '还没有策略，点右上角「新建策略」开始接入'"
     >
       <template #action>
         <n-button v-if="hasFilter" size="small" @click="resetFilters">重置筛选</n-button>
@@ -152,6 +160,8 @@ onMounted(() => load(true));
     <div v-else class="grid grid-2">
       <RunnerCard v-for="runner in filtered" :key="runner.id" :runner="runner" />
     </div>
+
+    <StrategyCreateModal v-model:show="createOpen" @created="load()" />
   </div>
 </template>
 
