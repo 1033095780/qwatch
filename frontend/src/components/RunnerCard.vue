@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// RunnerCard.vue — 策略卡片（总览与策略列表共用）：状态、今日盈亏、迷你曲线、关键指标。
+// RunnerCard.vue — 策略卡片：状态/标签、放大的净值曲线、权益与盈亏、关键指标。
 import { computed } from 'vue';
 import type { Runner } from '@/api/types';
 import { fmtPct } from '@/utils/format';
@@ -24,31 +24,38 @@ const accent = computed(() => {
 <template>
   <router-link :to="'/strategies/' + runner.id" class="runner-card card card-hover">
     <span class="accent" :style="{ background: accent }" />
+
     <div class="head">
       <div class="name-wrap">
         <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
         <span class="name truncate" :title="runner.name">{{ runner.name }}</span>
       </div>
-      <MarketTag :market="runner.market" :venue="runner.venue" />
+      <div class="tags">
+        <StatusTag :status="runner.status" compact />
+        <MarketTag :market="runner.market" :venue="runner.venue" />
+      </div>
     </div>
     <div class="id-row">
       <span class="mono strategy">{{ runner.strategy }}@{{ runner.version }}</span>
-      <StatusTag :status="runner.status" compact />
     </div>
-    <div class="mid">
-      <div>
-        <div class="eyebrow">权益</div>
-        <div class="equity num">¥{{ Number(runner.equity).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+
+    <div class="curve">
+      <Sparkline :values="runner.sparkline" :width="560" :height="84" :stroke-width="1.6" />
+    </div>
+
+    <div class="info">
+      <div class="equity-wrap">
+        <span class="eyebrow">权益</span>
+        <span class="equity num">¥{{ Number(runner.equity).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</span>
       </div>
-      <Sparkline :values="runner.sparkline" :width="92" :height="30" />
+      <div class="pnl-wrap">
+        <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" bold />
+        <span class="muted sep">·</span>
+        <span class="muted">总收益</span>
+        <span class="mono" :class="Number(runner.total_return_pct) >= 0 ? 'pos' : 'neg'">{{ fmtPct(runner.total_return_pct) }}</span>
+      </div>
     </div>
-    <div class="pnl-row">
-      <span class="muted">今日</span>
-      <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" bold />
-      <span class="muted sep">·</span>
-      <span class="muted">总收益</span>
-      <span class="mono" :class="Number(runner.total_return_pct) >= 0 ? 'pos' : 'neg'">{{ fmtPct(runner.total_return_pct) }}</span>
-    </div>
+
     <div class="foot">
       <div class="metric"><span class="k">最大回撤</span><span class="v mono">{{ fmtPct(runner.max_drawdown_pct, 2, false) }}</span></div>
       <div class="metric"><span class="k">24h 可用</span><span class="v mono">{{ runner.uptime_24h }}%</span></div>
@@ -90,16 +97,22 @@ const accent = computed(() => {
   min-width: 0;
 }
 .name {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+.tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 .id-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-top: -4px;
+  margin-top: -6px;
 }
 .strategy {
   font-size: 11px;
@@ -108,26 +121,39 @@ const accent = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.mid {
+.curve {
+  margin: 4px 0 2px;
+  height: 84px;
+}
+.curve :deep(svg) {
+  width: 100%;
+  height: 84px;
+}
+.info {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 2px;
+  flex-wrap: wrap;
+}
+.equity-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 .equity {
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 600;
   letter-spacing: -0.02em;
-  margin-top: 2px;
   white-space: nowrap;
 }
-.pnl-row {
+.pnl-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   flex-wrap: wrap;
+  padding-bottom: 2px;
 }
 .sep {
   opacity: 0.5;
@@ -162,6 +188,12 @@ const accent = computed(() => {
 @media (max-width: 639px) {
   .equity {
     font-size: 18px;
+  }
+  .curve {
+    height: 64px;
+  }
+  .curve :deep(svg) {
+    height: 64px;
   }
 }
 </style>

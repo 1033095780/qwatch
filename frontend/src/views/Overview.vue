@@ -13,7 +13,6 @@ import MetricCard from '@/components/MetricCard.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import PnlText from '@/components/PnlText.vue';
 import RangeTabs from '@/components/RangeTabs.vue';
-import RunnerCard from '@/components/RunnerCard.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import StatusDot from '@/components/StatusDot.vue';
@@ -251,15 +250,6 @@ onMounted(() => load(true));
           </div>
         </SectionCard>
       </div>
-
-      <SectionCard title="策略卡片" :subtitle="data.total + ' 个运行实例 · 覆盖 A股 / 商品期货 / 金融期货'">
-        <template #extra>
-          <router-link to="/strategies" class="link-more">筛选与搜索 <ChevronRight :size="13" /></router-link>
-        </template>
-        <div class="grid grid-3">
-          <RunnerCard v-for="runner in data.runners" :key="runner.id" :runner="runner" />
-        </div>
-      </SectionCard>
 
       <div class="grid grid-main">
         <SectionCard title="最新成交" subtitle="最近 8 笔">

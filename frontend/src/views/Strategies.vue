@@ -112,8 +112,8 @@ onMounted(() => load(true));
       <n-button text size="tiny" @click="load(true)">重试</n-button>
     </div>
 
-    <div v-if="loading" class="grid grid-3">
-      <div v-for="i in 6" :key="i" class="skel skel-card" style="height: 190px" />
+    <div v-if="loading" class="grid grid-2">
+      <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 300px" />
     </div>
 
     <EmptyState
@@ -126,7 +126,7 @@ onMounted(() => load(true));
       </template>
     </EmptyState>
 
-    <div v-else class="grid grid-3">
+    <div v-else class="grid grid-2">
       <RunnerCard v-for="runner in filtered" :key="runner.id" :runner="runner" />
     </div>
   </div>
