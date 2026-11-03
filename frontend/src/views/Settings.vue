@@ -247,7 +247,7 @@ onMounted(() => {
           <div class="panel-head">
             <div>
               <h2 class="panel-title">关于 qwatch</h2>
-              <p class="panel-sub">多策略 / 多市场 / 多账户监控工作台</p>
+              <p class="panel-sub">多策略 / 多市场监控工作台</p>
             </div>
           </div>
           <div class="about-grid">

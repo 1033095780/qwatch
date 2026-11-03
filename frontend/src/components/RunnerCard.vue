@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// RunnerCard.vue — 策略卡片：状态/平台/类型/标签、放大的净值曲线、权益与盈亏、关键指标。
+// RunnerCard.vue — 策略卡片：名称/市场/简介、净值曲线、权益与盈亏、四项分析指标。
 import { computed } from 'vue';
 import type { Runner } from '@/api/types';
 import { fmtPct } from '@/utils/format';
@@ -7,7 +7,6 @@ import MarketTag from './MarketTag.vue';
 import PnlText from './PnlText.vue';
 import Sparkline from './Sparkline.vue';
 import StatusDot from './StatusDot.vue';
-import StatusTag from './StatusTag.vue';
 
 const props = defineProps<{ runner: Runner }>();
 
@@ -19,6 +18,15 @@ const accent = computed(() => {
     default: return '#2f3a4f';
   }
 });
+
+const ratio = (value: string): string => {
+  const number = Number(value);
+  return number > 0 ? number.toFixed(2) : '—';
+};
+const winRate = (value: string): string => {
+  const number = Number(value);
+  return number > 0 ? number.toFixed(1) + '%' : '—';
+};
 </script>
 
 <template>
@@ -30,25 +38,13 @@ const accent = computed(() => {
         <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
         <span class="name truncate" :title="runner.name">{{ runner.name }}</span>
       </div>
-      <div class="tags">
-        <StatusTag :status="runner.status" compact />
-        <MarketTag :market="runner.market" :venue="runner.venue" />
-      </div>
-    </div>
-    <div class="id-row">
-      <span class="mono strategy">{{ runner.strategy }}@{{ runner.version }}</span>
-      <div class="meta-tags">
-        <span v-if="runner.platform_label" class="mini-tag">{{ runner.platform_label }}</span>
-        <span v-if="runner.strategy_type_label" class="mini-tag">{{ runner.strategy_type_label }}</span>
-      </div>
-    </div>
-    <div v-if="runner.tags.length" class="tag-row">
-      <span v-for="tag in runner.tags.slice(0, 3)" :key="tag" class="tag">#{{ tag }}</span>
-      <span v-if="runner.tags.length > 3" class="tag">+{{ runner.tags.length - 3 }}</span>
+      <MarketTag :market="runner.market" />
     </div>
 
+    <p class="desc" :title="runner.description || ''">{{ runner.description || '暂无简介' }}</p>
+
     <div class="curve">
-      <Sparkline :values="runner.sparkline" :width="560" :height="84" :stroke-width="1.6" />
+      <Sparkline :values="runner.sparkline" :width="560" :height="88" :stroke-width="1.6" />
     </div>
 
     <div class="info">
@@ -65,9 +61,10 @@ const accent = computed(() => {
     </div>
 
     <div class="foot">
-      <div class="metric"><span class="k">最大回撤</span><span class="v mono">{{ fmtPct(runner.max_drawdown_pct, 2, false) }}</span></div>
-      <div class="metric"><span class="k">24h 可用</span><span class="v mono">{{ runner.uptime_24h }}%</span></div>
-      <div class="metric"><span class="k">持仓</span><span class="v mono">{{ runner.position_count }}</span></div>
+      <div class="metric"><span class="k">夏普</span><span class="v num">{{ ratio(runner.sharpe) }}</span></div>
+      <div class="metric"><span class="k">最大回撤</span><span class="v num">{{ fmtPct(runner.max_drawdown_pct, 2, false) }}</span></div>
+      <div class="metric"><span class="k">胜率</span><span class="v num">{{ winRate(runner.win_rate_pct) }}</span></div>
+      <div class="metric"><span class="k">盈亏比</span><span class="v num">{{ ratio(runner.profit_factor) }}</span></div>
     </div>
   </router-link>
 </template>
@@ -77,7 +74,7 @@ const accent = computed(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   overflow: hidden;
   color: inherit;
 }
@@ -108,63 +105,25 @@ const accent = computed(() => {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
+  color: var(--text);
 }
-.tags {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-}
-.id-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: -6px;
-}
-.strategy {
+.desc {
+  min-height: 16px;
   font-size: 11px;
-  color: var(--text-3);
+  line-height: 1.45;
+  color: var(--text-2);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.meta-tags {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-.mini-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: rgba(91, 140, 255, 0.07);
-  color: var(--text-2);
-  font-size: 10px;
-  font-family: var(--font-mono);
-  white-space: nowrap;
-}
-.tag-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: -4px;
-}
-.tag {
-  font-size: 10px;
-  color: var(--text-3);
+  margin: -2px 0 0;
 }
 .curve {
   margin: 4px 0 2px;
-  height: 84px;
+  height: 88px;
 }
 .curve :deep(svg) {
   width: 100%;
-  height: 84px;
+  height: 88px;
 }
 .info {
   display: flex;
@@ -179,10 +138,11 @@ const accent = computed(() => {
   gap: 1px;
 }
 .equity {
-  font-size: 21px;
+  font-size: 23px;
   font-weight: 600;
   letter-spacing: -0.02em;
   white-space: nowrap;
+  color: var(--text);
 }
 .pnl-wrap {
   display: flex;
@@ -203,7 +163,7 @@ const accent = computed(() => {
 }
 .foot {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
@@ -212,25 +172,29 @@ const accent = computed(() => {
 .metric {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .k {
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .v {
-  font-size: 12px;
-  color: var(--text-2);
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
 }
 @media (max-width: 639px) {
   .equity {
-    font-size: 18px;
+    font-size: 20px;
   }
   .curve {
-    height: 64px;
+    height: 68px;
   }
   .curve :deep(svg) {
-    height: 64px;
+    height: 68px;
+  }
+  .foot {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

@@ -1,7 +1,7 @@
 // api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记。
 import { reactive } from 'vue';
 import type {
-  Account, Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
+  Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
   LoginResponse, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
   SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
   ListResponse,
@@ -115,9 +115,6 @@ export const api = {
   },
   createRunner(body: RunnerCreateRequest) {
     return request<{ runner: Runner }>('/runners', { method: 'POST', body: JSON.stringify(body) });
-  },
-  accounts() {
-    return request<ListResponse<Account>>('/accounts');
   },
   signals(query: SignalQuery = {}) {
     return request<SignalsResponse>('/signals' + qs(query as Record<string, string | number | undefined>));

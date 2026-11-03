@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// MetricCard.vue — KPI 卡：标签 / 大数字 / 变化 / 图标，可选底部插槽（sparkline 等）。
+// MetricCard.vue — KPI 卡：标签 / 大数字 / 变化 / 图标。
 import type { Component } from 'vue';
 import PnlText from './PnlText.vue';
 
@@ -19,21 +19,13 @@ withDefaults(defineProps<{
   loading: false,
   accent: 'primary',
 });
-
-const ACCENT: Record<string, string> = {
-  primary: 'rgba(91,140,255,.1)',
-  up: 'rgba(240,68,56,.1)',
-  down: 'rgba(46,204,143,.1)',
-  warning: 'rgba(245,165,36,.1)',
-  danger: 'rgba(240,68,56,.1)',
-};
 </script>
 
 <template>
   <div class="metric-card card">
     <div class="top">
       <span class="kpi-label">{{ label }}</span>
-      <span v-if="icon" class="icon" :style="{ background: ACCENT[accent] || ACCENT.primary }">
+      <span v-if="icon" class="icon">
         <component :is="icon" :size="15" :stroke-width="1.8" />
       </span>
     </div>
@@ -57,7 +49,7 @@ const ACCENT: Record<string, string> = {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 128px;
+  min-height: 138px;
 }
 .top {
   display: flex;
@@ -68,11 +60,12 @@ const ACCENT: Record<string, string> = {
 .icon {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 8px;
-  color: var(--text-2);
-  border: 1px solid var(--border);
+  color: #a9c2ff;
+  border: 1px solid rgba(91, 140, 255, 0.22);
+  background: rgba(91, 140, 255, 0.1);
 }
 .kpi-value {
   margin-top: 4px;
@@ -86,6 +79,6 @@ const ACCENT: Record<string, string> = {
 }
 .sub {
   font-size: 12px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 </style>

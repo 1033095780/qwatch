@@ -33,6 +33,7 @@ RUNNERS = [
         "id": "cta_rb-prod", "name": "螺纹钢趋势", "strategy": "me/cta_rb", "version": "1.2.0",
         "market": "CN_FUT", "venue": "XSGE", "platform": "qmt", "strategy_type": "trend",
         "tags": ["期货主账户", "夜盘", "低频"], "status": "running", "accounts": ["qmt:8888"],
+        "description": "黑色系趋势跟踪，15 分钟级别，夜盘连续持有。",
         "equity": 462300.12, "today_pnl": 6240.5, "initial": 348000,
         "sharpe": 1.86, "win_rate": 57.3, "uptime_30d": 99.71,
         "last_seen_offset": 4, "heartbeat_interval": 30,
@@ -41,6 +42,7 @@ RUNNERS = [
         "id": "cta_if-intraday", "name": "股指日内动量", "strategy": "me/cta_if", "version": "2.0.1",
         "market": "CN_FUT", "venue": "CFFEX", "platform": "ptrade", "strategy_type": "intraday",
         "tags": ["股指", "日内", "对冲"], "status": "running", "accounts": ["cffex:0666"],
+        "description": "IF / IH 日内动量，开盘后半小时入场，收盘前平仓。",
         "equity": 318720.55, "today_pnl": 4812.6, "initial": 262000,
         "sharpe": 2.04, "win_rate": 55.1, "uptime_30d": 99.94,
         "last_seen_offset": 2, "heartbeat_interval": 30,
@@ -49,6 +51,7 @@ RUNNERS = [
         "id": "cta_ag-swing", "name": "白银波段", "strategy": "me/cta_ag", "version": "1.1.2",
         "market": "CN_FUT", "venue": "XSGE", "platform": "myquant", "strategy_type": "trend",
         "tags": ["贵金属", "波段", "夜盘"], "status": "degraded", "accounts": ["qmt:8888"],
+        "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%。",
         "equity": 187352.48, "today_pnl": -3485.2, "initial": 166000,
         "sharpe": 0.92, "win_rate": 48.6, "uptime_30d": 97.03,
         "last_seen_offset": 44, "heartbeat_interval": 30,
@@ -57,6 +60,7 @@ RUNNERS = [
         "id": "cta_cu-breakout", "name": "沪铜突破", "strategy": "me/cta_cu", "version": "0.8.7",
         "market": "CN_FUT", "venue": "XSGE", "platform": "tqsdk", "strategy_type": "multifactor",
         "tags": ["有色金属", "突破", "期货主账户"], "status": "offline", "accounts": ["qmt:8888"],
+        "description": "沪铜趋势突破，日线级别，等待行情恢复后上线。",
         "equity": 45120.6, "today_pnl": 0, "initial": 60000,
         "sharpe": 0.71, "win_rate": 44.2, "uptime_30d": 88.4,
         "last_seen_offset": 5 * 60, "heartbeat_interval": 30,
@@ -108,13 +112,13 @@ def seed() -> None:
             last_seen = _ts(now - timedelta(seconds=runner["last_seen_offset"]))
             conn.execute(
                 """INSERT INTO runners(
-                  id,name,strategy,version,market,venue,platform,strategy_type,tags,status,accounts,
+                  id,name,strategy,version,market,venue,platform,strategy_type,description,tags,status,accounts,
                   equity,today_pnl,initial_equity,total_return_pct,max_drawdown_pct,sharpe,win_rate,uptime_30d,
                   heartbeat_interval,last_seen,last_loop,loop_same,last_tick,last_msg,created_at,demo
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)""",
                 (
                     runner["id"], runner["name"], runner["strategy"], runner["version"], runner["market"], runner["venue"],
-                    runner["platform"], runner["strategy_type"], dumps(runner["tags"]), runner["status"], dumps(runner["accounts"]),
+                    runner["platform"], runner["strategy_type"], runner.get("description", ""), dumps(runner["tags"]), runner["status"], dumps(runner["accounts"]),
                     target, float(runner["today_pnl"]), initial, round(total_return, 2), round(abs(max_dd), 2),
                     runner["sharpe"], runner["win_rate"], runner["uptime_30d"], runner["heartbeat_interval"],
                     last_seen, 128000 + index * 97, 0, None, "", _ts(now - timedelta(days=180)),

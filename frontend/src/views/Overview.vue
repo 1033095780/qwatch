@@ -1,15 +1,16 @@
 <script setup lang="ts">
 // Overview.vue — 总览：KPI 四卡、组合净值（区间/基准）、策略状态、策略卡片、最新信号、告警动态。
 import { computed, onMounted, ref, watch } from 'vue';
-import { NButton, NSwitch, useMessage } from 'naive-ui';
+import { NButton, useMessage } from 'naive-ui';
 import { Activity, ArrowRight, Bell, ChevronRight, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Overview, RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtDateTime, fmtMoney, fmtPct, fmtSignedMoney, fromNow, pnlClass } from '@/utils/format';
-import { SIGNAL_ACTION_LABELS } from '@/utils/catalog';
+import { fmtDateTime, fmtMoney, fromNow } from '@/utils/format';
+import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import EquityChart from '@/components/EquityChart.vue';
 import EmptyState from '@/components/EmptyState.vue';
+import HeartbeatMini from '@/components/HeartbeatMini.vue';
 import MetricCard from '@/components/MetricCard.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import PnlText from '@/components/PnlText.vue';
@@ -27,7 +28,6 @@ const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
 const range = ref<RangeKey>('all');
-const showBenchmark = ref(true);
 const scope = ref<string>('portfolio');
 const runnerDetail = ref<RunnerDetail | null>(null);
 const scopeLoading = ref(false);
@@ -35,7 +35,6 @@ const scopeLoading = ref(false);
 const isPortfolio = computed(() => scope.value === 'portfolio');
 const activeRunner = computed(() => (isPortfolio.value ? null : data.value?.runners.find((r) => r.id === scope.value) ?? null));
 const chartPoints = computed(() => (isPortfolio.value ? data.value?.equity_curve ?? [] : runnerDetail.value?.equity ?? []));
-const chartBenchmark = computed(() => (isPortfolio.value ? data.value?.benchmark ?? [] : []));
 const lastNav = computed(() => {
   const points = runnerDetail.value?.equity ?? [];
   return points.length ? Number(points[points.length - 1].nav ?? 0).toFixed(4) : null;
@@ -52,14 +51,6 @@ const activeAlertLevels = computed(() => {
 
 const periodReturn = computed(() => {
   const curve = chartPoints.value;
-  if (curve.length < 2) return null;
-  const first = Number(curve[0].value);
-  const last = Number(curve[curve.length - 1].value);
-  return first > 0 ? ((last - first) / first) * 100 : null;
-});
-
-const benchmarkReturn = computed(() => {
-  const curve = data.value?.benchmark ?? [];
   if (curve.length < 2) return null;
   const first = Number(curve[0].value);
   const last = Number(curve[curve.length - 1].value);
@@ -178,14 +169,10 @@ onMounted(() => load(true));
       <div class="grid grid-main">
         <SectionCard
           :title="isPortfolio ? '组合净值' : activeRunner?.name || '策略净值'"
-          :subtitle="isPortfolio ? '全部账户合并 · 单位净值法' : (activeRunner?.strategy || '') + ' · 策略归因口径'"
+          :subtitle="isPortfolio ? '全部策略合并 · 策略归因口径' : (activeRunner?.description || MARKET_LABELS[activeRunner?.market || 'CN_A']) + ' · 策略归因口径'"
         >
           <template #extra>
             <RangeTabs v-model="range" />
-            <label v-if="isPortfolio" class="bench-toggle">
-              <n-switch v-model:value="showBenchmark" size="small" />
-              <span>基准</span>
-            </label>
           </template>
 
           <div class="scope-switch">
@@ -206,20 +193,14 @@ onMounted(() => load(true));
           <div class="chart-wrap" :class="{ refreshing: refreshing || scopeLoading }">
             <EquityChart
               :data="chartPoints"
-              :benchmark="chartBenchmark"
-              :show-benchmark="showBenchmark && isPortfolio"
               :height="300"
               :value-label="isPortfolio ? '组合权益' : '策略权益'"
             />
           </div>
           <div class="chart-foot">
             <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
-            <span v-if="showBenchmark && isPortfolio" class="legend-item"><i class="legend-line bm" />基准</span>
             <span v-if="periodReturn !== null">
               区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
-            </span>
-            <span v-if="showBenchmark && isPortfolio && benchmarkReturn !== null" class="muted">
-              基准 <span class="num" :class="pnlClass(benchmarkReturn)">{{ fmtPct(benchmarkReturn) }}</span>
             </span>
             <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span></span>
             <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
@@ -242,7 +223,8 @@ onMounted(() => load(true));
               <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
               <div class="status-main">
                 <span class="status-name truncate">{{ runner.name }}</span>
-                <span class="status-meta mono">{{ runner.strategy }}</span>
+                <span class="status-meta">{{ runner.description || MARKET_LABELS[runner.market] || runner.market }}</span>
+                <HeartbeatMini :bars="runner.heartbeat_bars" />
               </div>
               <div class="status-right">
                 <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" />
@@ -363,14 +345,6 @@ onMounted(() => load(true));
   background: var(--primary-soft);
   color: var(--text);
 }
-.bench-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-2);
-  cursor: pointer;
-}
 .link-more {
   display: inline-flex;
   align-items: center;
@@ -416,11 +390,6 @@ onMounted(() => load(true));
 }
 .legend-line.eq {
   background: var(--primary);
-}
-.legend-line.bm {
-  background: #5f6d84;
-  background-image: linear-gradient(90deg, #5f6d84 60%, transparent 60%);
-  background-size: 4px 2px;
 }
 .status-list {
   display: flex;

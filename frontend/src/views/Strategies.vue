@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// Strategies.vue — 策略列表：搜索 + 状态/市场/平台/类型/标签/账户筛选 + 卡片网格 + 空状态。
+// Strategies.vue — 策略列表：搜索 + 状态/市场/平台/类型/标签筛选 + 卡片网格 + 空状态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
 import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Account, Runner, RunnerStatus } from '@/api/types';
+import type { Runner, RunnerStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
@@ -14,7 +14,6 @@ import StrategyCreateModal from '@/components/StrategyCreateModal.vue';
 const settings = useSettingsStore();
 
 const runners = ref<Runner[]>([]);
-const accounts = ref<Account[]>([]);
 const loading = ref(true);
 const error = ref('');
 const createOpen = ref(false);
@@ -25,7 +24,6 @@ const marketFilter = ref<'all' | 'CN_A' | 'CN_FUT'>('all');
 const platformFilter = ref<string>('all');
 const typeFilter = ref<string>('all');
 const tagFilter = ref<string>('all');
-const accountFilter = ref<string>('all');
 
 const statusOptions = [
   { label: '全部状态', value: 'all' },
@@ -39,10 +37,6 @@ const marketOptions = [
   { label: 'A股', value: 'CN_A' },
   { label: '期货', value: 'CN_FUT' },
 ];
-const accountOptions = computed(() => [
-  { label: '全部账户', value: 'all' },
-  ...accounts.value.map((a) => ({ label: a.name, value: a.id })),
-]);
 const platformOptions = computed(() => {
   const seen = new Map<string, string>();
   runners.value.forEach((r) => { if (r.platform) seen.set(r.platform, r.platform_label); });
@@ -67,25 +61,20 @@ const filtered = computed(() => {
     if (platformFilter.value !== 'all' && runner.platform !== platformFilter.value) return false;
     if (typeFilter.value !== 'all' && runner.strategy_type !== typeFilter.value) return false;
     if (tagFilter.value !== 'all' && !runner.tags.includes(tagFilter.value)) return false;
-    if (accountFilter.value !== 'all' && !runner.accounts.some((a) => a.id === accountFilter.value)) return false;
     if (q && !(runner.name + runner.strategy + runner.id).toLowerCase().includes(q)) return false;
     return true;
   });
 });
 
-const hasFilter = computed(
-  () => !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all'
-    || platformFilter.value !== 'all' || typeFilter.value !== 'all' || tagFilter.value !== 'all'
-    || accountFilter.value !== 'all',
-);
+const hasFilter = computed(() =>
+  !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all'
+  || platformFilter.value !== 'all' || typeFilter.value !== 'all' || tagFilter.value !== 'all');
 
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
   try {
-    const [runnerRes, accountRes] = await Promise.all([api.runners(), api.accounts()]);
-    runners.value = runnerRes.items;
-    accounts.value = accountRes.items;
+    runners.value = (await api.runners()).items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '策略列表加载失败';
   } finally {
@@ -100,7 +89,6 @@ function resetFilters(): void {
   platformFilter.value = 'all';
   typeFilter.value = 'all';
   tagFilter.value = 'all';
-  accountFilter.value = 'all';
 }
 
 watch(() => settings.refreshSeq, () => load());
@@ -129,7 +117,6 @@ onMounted(() => load(true));
         <n-select v-model:value="platformFilter" :options="platformOptions" size="small" class="select" />
         <n-select v-model:value="typeFilter" :options="typeOptions" size="small" class="select" />
         <n-select v-model:value="tagFilter" :options="tagOptions" size="small" class="select" />
-        <n-select v-model:value="accountFilter" :options="accountOptions" size="small" class="select select-wide" />
       </div>
       <div class="toolbar-right">
         <span class="result mono">{{ filtered.length }} / {{ runners.length }}</span>

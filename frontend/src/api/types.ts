@@ -30,11 +30,9 @@ export interface RunnerAccount {
 
 export interface RunnerCreateRequest {
   name: string;
-  platform?: Platform | '';
-  market?: Market | '';
-  strategy_type?: StrategyType | '';
-  tags?: string[];
-  accounts?: string[];
+  platform?: string;
+  market?: string;
+  description?: string;
 }
 
 export interface Runner {
@@ -42,6 +40,7 @@ export interface Runner {
   name: string;
   strategy: string;
   version: string;
+  description: string;
   market: Market;
   venue: string;
   platform: Platform;
@@ -56,6 +55,10 @@ export interface Runner {
   today_pnl_pct: string;
   total_return_pct: string;
   max_drawdown_pct: string;
+  sharpe: string;
+  profit_factor: string;
+  win_rate_pct: string;
+  heartbeat_bars?: ('ok' | 'miss' | 'off')[];
   uptime_24h: string;
   last_heartbeat: string;
   sparkline: number[];
@@ -174,6 +177,9 @@ export interface RunnerDetail {
     max_drawdown_pct: string;
     sharpe: string;
     win_rate_pct: string;
+    profit_factor: string;
+    calmar: string;
+    volatility: string;
     uptime_30d: string;
   };
   equity: EquityPoint[];
@@ -197,20 +203,6 @@ export interface RunnerDetail {
     env: string;
     accounts: string[];
   };
-}
-
-export interface Account {
-  id: string;
-  name: string;
-  venue: string;
-  market: Market;
-  currency: string;
-  equity: string;
-  today_pnl: string;
-  today_pnl_pct: string;
-  positions_count: number;
-  sparkline: number[];
-  runner_ids: string[];
 }
 
 export interface ListResponse<T> {

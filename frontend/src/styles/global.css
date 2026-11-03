@@ -177,10 +177,11 @@ textarea {
 .kpi-value {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 28px;
+  font-size: 32px;
   font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  letter-spacing: -0.04em;
+  line-height: 1.12;
+  color: var(--text);
 }
 .kpi-value--sm {
   font-size: 22px;

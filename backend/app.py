@@ -151,20 +151,78 @@ def sparkline_of(conn: sqlite3.Connection, runner_id: str) -> list[float]:
     return values or [0.0]
 
 
+def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, float]:
+    """基于最近 180 个权益点计算夏普、回撤、盈亏比、卡玛、波动率。"""
+    rows = conn.execute(
+        "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 180", (runner_id,)
+    ).fetchall()
+    values = [float(row["equity"]) for row in reversed(rows)]
+    empty = {"sharpe": 0.0, "max_drawdown": 0.0, "profit_factor": 0.0, "calmar": 0.0, "volatility": 0.0, "total_return": 0.0}
+    if len(values) < 2 or values[0] <= 0:
+        return empty
+    returns = [(values[i] / values[i - 1] - 1) for i in range(1, len(values))]
+    mean = sum(returns) / len(returns)
+    variance = sum((item - mean) ** 2 for item in returns) / len(returns)
+    std = math.sqrt(variance)
+    sharpe = (mean / std * math.sqrt(252)) if std > 0 else 0.0
+    peak = 0.0
+    max_drawdown = 0.0
+    gains = 0.0
+    losses = 0.0
+    for index, value in enumerate(values):
+        peak = max(peak, value)
+        max_drawdown = min(max_drawdown, value / peak - 1)
+        if index and value >= values[index - 1]:
+            gains += value - values[index - 1]
+        elif index:
+            losses += values[index - 1] - value
+    profit_factor = (gains / losses) if losses > 0 else (9.99 if gains > 0 else 0.0)
+    total_return = values[-1] / values[0] - 1
+    years = max(1, len(values) - 1) / 365
+    annual_return = (values[-1] / values[0]) ** (1 / years) - 1 if values[-1] > 0 else 0.0
+    calmar = (annual_return / abs(max_drawdown)) if max_drawdown < 0 else 0.0
+    return {
+        "sharpe": round(sharpe, 2),
+        "max_drawdown": round(abs(max_drawdown) * 100, 2),
+        "profit_factor": round(profit_factor, 2),
+        "calmar": round(calmar, 2),
+        "volatility": round(std * math.sqrt(252) * 100, 2),
+        "total_return": round(total_return * 100, 2),
+    }
+
+
+def heartbeat_bars(status: str) -> list[str]:
+    bars = ["ok"] * 24
+    if status == "degraded":
+        bars[-3:] = ["miss"] * 3
+    elif status == "offline":
+        bars[-10:] = ["miss"] * 10
+    elif status == "off_hours":
+        bars[-12:] = ["off"] * 12
+    return bars
+
+
 def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     equity = float(row["equity"])
     today = float(row["today_pnl"])
     base = equity - today
+    stats = runner_analytics(conn, row["id"])
     return {
         "id": row["id"], "name": row["name"], "strategy": row["strategy"], "version": row["version"],
+        "description": row["description"] or "",
         "market": row["market"], "venue": row["venue"], "platform": row["platform"],
-        "platform_label": PLATFORM_LABELS.get(row["platform"], ""),
-        "strategy_type": row["strategy_type"], "strategy_type_label": STRATEGY_TYPE_LABELS.get(row["strategy_type"], ""),
+        "platform_label": PLATFORM_LABELS.get(row["platform"], row["platform"]),
+        "strategy_type": row["strategy_type"],
+        "strategy_type_label": STRATEGY_TYPE_LABELS.get(row["strategy_type"], row["strategy_type"]),
         "tags": loads(row["tags"], []), "status": row["status"], "accounts": accounts_of(conn, row),
         "equity": f"{equity:.2f}", "today_pnl": f"{today:.2f}",
         "today_pnl_pct": f"{(today / base * 100) if base else 0:.2f}",
-        "total_return_pct": f"{float(row['total_return_pct']):.2f}",
-        "max_drawdown_pct": f"{float(row['max_drawdown_pct']):.2f}",
+        "total_return_pct": f"{stats['total_return']:.2f}",
+        "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
+        "sharpe": f"{stats['sharpe']:.2f}",
+        "profit_factor": f"{stats['profit_factor']:.2f}",
+        "win_rate_pct": f"{float(row['win_rate']):.1f}",
+        "heartbeat_bars": heartbeat_bars(row["status"]),
         "uptime_24h": "99.90" if row["status"] == "running" else "0.00",
         "last_heartbeat": row["last_seen"] or row["created_at"],
         "sparkline": sparkline_of(conn, row["id"]),
@@ -301,25 +359,6 @@ def logout(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     return {"ok": True}
 
 
-@app.get("/api/v1/accounts")
-def accounts_list(user: str = Depends(require_user)) -> dict[str, Any]:
-    with connect() as conn:
-        account_rows = conn.execute("SELECT * FROM accounts ORDER BY id").fetchall()
-        runner_rows = conn.execute("SELECT * FROM runners").fetchall()
-        items = []
-        for account in account_rows:
-            linked = [row for row in runner_rows if account["id"] in loads(row["accounts"], [])]
-            equity = sum(float(row["equity"]) for row in linked)
-            today = sum(float(row["today_pnl"]) for row in linked)
-            items.append({
-                "id": account["id"], "name": account["name"], "venue": account["venue"], "market": account["market"],
-                "currency": account["currency"], "equity": f"{equity:.2f}", "today_pnl": f"{today:.2f}",
-                "today_pnl_pct": f"{(today / max(1, equity - today) * 100):.2f}",
-                "positions_count": 0, "sparkline": [], "runner_ids": [row["id"] for row in linked],
-            })
-    return {"items": items, "total": len(items)}
-
-
 @app.post("/api/v1/runners")
 def create_runner(payload: dict[str, Any] = Body(default={}), user: str = Depends(require_user)) -> dict[str, Any]:
     name = str(payload.get("name", "")).strip()
@@ -328,6 +367,7 @@ def create_runner(payload: dict[str, Any] = Body(default={}), user: str = Depend
     platform = str(payload.get("platform") or "custom")
     strategy_type = str(payload.get("strategy_type") or "other")
     market = str(payload.get("market") or "CN_A")
+    description = str(payload.get("description") or "").strip()[:200]
     tags = [str(tag).strip() for tag in (payload.get("tags") or []) if str(tag).strip()][:8]
     account_ids = [str(item) for item in (payload.get("accounts") or [])]
     with connect() as conn:
@@ -342,12 +382,12 @@ def create_runner(payload: dict[str, Any] = Body(default={}), user: str = Depend
         runner_id = "runner-" + uuid.uuid4().hex[:8]
         created = iso_now()
         conn.execute(
-            """INSERT INTO runners(id,name,strategy,version,market,venue,platform,strategy_type,tags,status,accounts,
+            """INSERT INTO runners(id,name,strategy,version,market,venue,platform,strategy_type,description,tags,status,accounts,
                equity,today_pnl,initial_equity,total_return_pct,max_drawdown_pct,sharpe,win_rate,uptime_30d,
-               heartbeat_interval,last_seen,created_at,demo) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,0,0,0,0,30,NULL,?,0)""",
+               heartbeat_interval,last_seen,created_at,demo) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,0,0,0,0,30,NULL,?,0)""",
             (
                 runner_id, name, "me/strategy_" + runner_id[7:], "0.1.0", market, venue, platform,
-                strategy_type, dumps(tags), "offline", dumps(account_ids), created,
+                strategy_type, description, dumps(tags), "offline", dumps(account_ids), created,
             ),
         )
         row = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
@@ -406,8 +446,18 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         now = now_dt()
         for index in range(47, -1, -1):
             ts = now - timedelta(minutes=30 * index)
-            recent = last_seen and (now - last_seen).total_seconds() < 60
-            status = "ok" if recent and index < 2 else ("miss" if row["status"] == "offline" and index < 2 else ("ok" if recent else "miss"))
+            if row["demo"]:
+                if row["status"] == "running":
+                    status = "ok"
+                elif row["status"] == "degraded" and index < 3:
+                    status = "miss"
+                elif row["status"] == "offline" and index < 8:
+                    status = "miss"
+                else:
+                    status = "ok"
+            else:
+                recent = last_seen and (now - last_seen).total_seconds() < 60
+                status = "ok" if recent and index < 2 else ("miss" if row["status"] == "offline" and index < 2 else ("ok" if recent else "miss"))
             timeline.append({"ts": ts.isoformat(timespec="seconds").replace("+00:00", "Z"), "status": status})
         outages = []
         if row["status"] == "offline" and last_seen:
@@ -418,13 +468,18 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
             (runner_id,),
         ).fetchall()
         account_ids = loads(row["accounts"], [])
+        stats = runner_analytics(conn, runner_id)
         return {
             "runner": runner_view(conn, row), "range": range_key,
             "metrics": {
-                "total_return_pct": f"{float(row['total_return_pct']):.2f}",
+                "total_return_pct": f"{stats['total_return']:.2f}",
                 "today_pnl": f"{float(row['today_pnl']):.2f}",
-                "max_drawdown_pct": f"{float(row['max_drawdown_pct']):.2f}",
-                "sharpe": f"{float(row['sharpe']):.2f}", "win_rate_pct": f"{float(row['win_rate']):.1f}",
+                "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
+                "sharpe": f"{stats['sharpe']:.2f}",
+                "win_rate_pct": f"{float(row['win_rate']):.1f}",
+                "profit_factor": f"{stats['profit_factor']:.2f}",
+                "calmar": f"{stats['calmar']:.2f}",
+                "volatility": f"{stats['volatility']:.2f}",
                 "uptime_30d": f"{float(row['uptime_30d']):.2f}",
             },
             "equity": equity, "drawdown": drawdown, "heartbeat_timeline": timeline, "outages": outages,

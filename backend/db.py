@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS runners (
   venue TEXT NOT NULL,
   platform TEXT NOT NULL,
   strategy_type TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
   tags TEXT NOT NULL DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'offline',
   accounts TEXT NOT NULL DEFAULT '[]',
@@ -164,6 +165,8 @@ def init_db() -> None:
     with connect() as conn:
         conn.executescript(SCHEMA)
         columns = [row["name"] for row in conn.execute("PRAGMA table_info(runners)").fetchall()]
+        if "description" not in columns:
+            conn.execute("ALTER TABLE runners ADD COLUMN description TEXT NOT NULL DEFAULT ''")
         if "demo" not in columns:
             conn.execute("ALTER TABLE runners ADD COLUMN demo INTEGER NOT NULL DEFAULT 0")
 

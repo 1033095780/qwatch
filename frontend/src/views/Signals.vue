@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router';
 import { NButton, NDatePicker, NInput, NSelect, useMessage } from 'naive-ui';
 import { ArrowDown, ArrowUp, Download, FilterX, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Account, Runner, Signal, SignalStatus } from '@/api/types';
+import type { Runner, Signal, SignalStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { MARKET_LABELS, PLATFORM_OPTIONS, SIGNAL_ACTION_LABELS, STRATEGY_TYPE_OPTIONS } from '@/utils/catalog';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/utils/format';
@@ -25,7 +25,6 @@ const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 
 const runners = ref<Runner[]>([]);
-const accounts = ref<Account[]>([]);
 const items = ref<Signal[]>([]);
 const total = ref(0);
 const sumAmount = ref('0');
@@ -39,7 +38,6 @@ const sortDir = ref<'asc' | 'desc'>('desc');
 
 const filters = reactive({
   runnerId: '',
-  accountId: '',
   platform: '',
   market: '',
   strategyType: '',
@@ -71,7 +69,7 @@ const tagOptions = computed(() => {
 });
 
 const hasFilter = computed(
-  () => !!(filters.runnerId || filters.accountId || filters.platform || filters.market || filters.strategyType
+  () => !!(filters.runnerId || filters.platform || filters.market || filters.strategyType
     || filters.side || filters.status || filters.tag || filters.instrument || dateRange.value),
 );
 
@@ -99,7 +97,6 @@ async function load(): Promise<void> {
   try {
     const query = {
       runner_id: filters.runnerId || undefined,
-      account_id: filters.accountId || undefined,
       platform: filters.platform || undefined,
       market: filters.market || undefined,
       strategy_type: filters.strategyType || undefined,
@@ -112,16 +109,14 @@ async function load(): Promise<void> {
       limit: 200,
       cursor: 0,
     };
-    const [signalsRes, runnersRes, accountsRes] = await Promise.all([
+    const [signalsRes, runnersRes] = await Promise.all([
       api.signals(query),
       runners.value.length ? Promise.resolve({ items: runners.value }) : api.runners(),
-      accounts.value.length ? Promise.resolve({ items: accounts.value }) : api.accounts(),
     ]);
     items.value = signalsRes.items;
     total.value = signalsRes.total;
     sumAmount.value = signalsRes.sum_amount;
     runners.value = runnersRes.items;
-    accounts.value = accountsRes.items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '信号加载失败';
   } finally {
@@ -155,7 +150,6 @@ function sortIcon(key: SortKey): string {
 
 function resetFilters(): void {
   filters.runnerId = '';
-  filters.accountId = '';
   filters.platform = '';
   filters.market = '';
   filters.strategyType = '';
@@ -178,13 +172,13 @@ function exportCsv(): void {
     message.warning('当前筛选条件下没有可导出的信号');
     return;
   }
-  const header = ['时间(Asia/Shanghai)', '信号ID', '策略', '平台', '市场', '品种', '品种名称', '方向', '动作', '数量', '参考价', '金额', '状态', '账户', '标签'];
+  const header = ['时间(Asia/Shanghai)', '信号ID', '策略', '平台', '市场', '品种', '品种名称', '方向', '动作', '数量', '参考价', '金额', '状态', '标签'];
   const rows = sortedItems.value.map((s) => [
     fmtDateTime(s.ts), s.id, s.runner_name, s.platform_label, s.market_label, s.instrument, s.instrument_name,
     s.side === 'buy' ? '买入' : '卖出', SIGNAL_ACTION_LABELS[s.action],
     s.qty, s.price, s.amount,
     s.status === 'filled' ? '已执行' : s.status === 'pending' ? '待执行' : '已忽略',
-    s.account_name, s.tags.join(' / '),
+    s.tags.join(' / '),
   ]);
   const csv = '\uFEFF' + [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -215,8 +209,6 @@ watch(pageCount, () => {
 onMounted(() => {
   const qRunner = route.query.runner_id;
   if (typeof qRunner === 'string') filters.runnerId = qRunner;
-  const qAccount = route.query.account_id;
-  if (typeof qAccount === 'string') filters.accountId = qAccount;
   load();
 });
 
@@ -293,7 +285,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <th class="th-num sortable" @click="toggleSort('amount')">金额 <span class="sort">{{ sortIcon('amount') }}</span></th>
               <th>状态</th>
               <th>备注</th>
-              <th>账户</th>
             </tr>
           </thead>
           <tbody>
@@ -313,7 +304,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
               <td><SignalStatusTag :status="signal.status" /></td>
               <td class="truncate muted" :title="signal.msg || ''">{{ signal.msg || '—' }}</td>
-              <td class="truncate muted">{{ signal.account_name }}</td>
             </tr>
           </tbody>
         </table>
