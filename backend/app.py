@@ -359,7 +359,13 @@ def adjusted_equity_rows(conn: sqlite3.Connection, runner_id: str, rows: list[sq
         while flow_index < len(flows) and flows[flow_index]["ts"] <= row["ts"]:
             cumulative += float(flows[flow_index]["amount"])
             flow_index += 1
-        result.append({"ts": row["ts"], "equity": float(row["equity"]) - cumulative})
+        keys = set(row.keys())
+        result.append({
+            "ts": row["ts"],
+            "equity": float(row["equity"]) - cumulative,
+            "pnl": row["pnl"] if "pnl" in keys else None,
+            "nav": row["nav"] if "nav" in keys else None,
+        })
     return result
 
 
@@ -456,10 +462,19 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
             "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (row["id"],)
         ).fetchone()
         initial = float(first["equity"]) if first else 0.0
+    latest_metric = conn.execute(
+        "SELECT pnl, nav FROM equity_points WHERE runner_id = ? AND (pnl IS NOT NULL OR nav IS NOT NULL) ORDER BY ts DESC LIMIT 1",
+        (row["id"],),
+    ).fetchone()
+    reported_pnl = float(latest_metric["pnl"]) if latest_metric and latest_metric["pnl"] is not None else None
+    reported_nav = float(latest_metric["nav"]) if latest_metric and latest_metric["nav"] is not None else None
     flow = net_cash_flow(conn, row["id"])
-    total_pnl = equity - initial - flow if initial > 0 else 0.0
+    total_pnl = reported_pnl if reported_pnl is not None else (equity - initial - flow if initial > 0 else 0.0)
     adjusted_return = (total_pnl / (initial + max(0.0, flow)) * 100) if initial > 0 else stats["total_return"]
-    display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
+    if reported_nav is not None:
+        display_return = (reported_nav - 1) * 100
+    else:
+        display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
     return {
         "id": row["id"], "name": row["name"], "strategy": row["strategy"], "version": row["version"],
         "description": row["description"] or "",
@@ -732,7 +747,7 @@ def list_runners(
 
 
 def equity_points(conn: sqlite3.Connection, runner_id: str, days: int) -> list[dict[str, Any]]:
-    rows = conn.execute("SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts", (runner_id,)).fetchall()
+    rows = conn.execute("SELECT ts, equity, pnl, nav FROM equity_points WHERE runner_id = ? ORDER BY ts", (runner_id,)).fetchall()
     adjusted = adjusted_equity_rows(conn, runner_id, rows)
     return adjusted if len(adjusted) <= days else adjusted[-days:]
 
@@ -748,17 +763,33 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         if not points:
             points = []
         equity = []
+        pnl_curve = []
+        nav_curve = []
         drawdown = []
         peak = 0.0
         initial = float(row["initial_equity"]) or float(row["equity"]) or 1
         for point in points:
             value = float(point["equity"])
+            fallback_pnl = (value - initial) if initial else 0.0
+            fallback_nav = (value / initial) if initial else 1.0
+            pnl_value = float(point["pnl"]) if point["pnl"] is not None else fallback_pnl
+            nav_value = float(point["nav"]) if point["nav"] is not None else fallback_nav
             peak = max(peak, value)
             equity.append({"ts": point["ts"], "nav": round(value / initial, 6) if initial else 1, "value": f"{value:.2f}"})
+            pnl_curve.append({"ts": point["ts"], "nav": round(pnl_value / initial, 6) if initial else 1, "value": f"{pnl_value:.2f}"})
+            nav_curve.append({"ts": point["ts"], "nav": round(nav_value, 6), "value": f"{nav_value:.6f}"})
             drawdown.append({"ts": point["ts"], "value": round((value / peak - 1) * 100, 2) if peak else 0})
         if not equity:
             equity = [{"ts": row["last_seen"] or row["created_at"], "nav": 1, "value": f"{float(row['equity']):.2f}"}]
+            pnl_curve = [{"ts": equity[0]["ts"], "nav": 0, "value": "0.00"}]
+            nav_curve = [{"ts": equity[0]["ts"], "nav": 1, "value": "1.000000"}]
             drawdown = [{"ts": equity[0]["ts"], "value": 0}]
+        latest_metric = conn.execute(
+            "SELECT pnl, nav FROM equity_points WHERE runner_id = ? AND (pnl IS NOT NULL OR nav IS NOT NULL) ORDER BY ts DESC LIMIT 1",
+            (runner_id,),
+        ).fetchone()
+        reported_pnl = float(latest_metric["pnl"]) if latest_metric and latest_metric["pnl"] is not None else None
+        reported_nav = float(latest_metric["nav"]) if latest_metric and latest_metric["nav"] is not None else None
         last_seen = dt_from(row["last_seen"])
         timeline = []
         now = now_dt()
@@ -794,9 +825,12 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
             ).fetchone()
             initial_basis = float(first_point["equity"]) if first_point else 0.0
         flow = net_cash_flow(conn, runner_id)
-        total_pnl = float(row["equity"]) - initial_basis - flow if initial_basis > 0 else 0.0
+        total_pnl = reported_pnl if reported_pnl is not None else (float(row["equity"]) - initial_basis - flow if initial_basis > 0 else 0.0)
         adjusted_return = (total_pnl / (initial_basis + max(0.0, flow)) * 100) if initial_basis > 0 else stats["total_return"]
-        display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
+        if reported_nav is not None:
+            display_return = (reported_nav - 1) * 100
+        else:
+            display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
         return {
             "runner": runner_view(conn, row), "range": range_key,
             "metrics": {
@@ -812,7 +846,8 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
                 "volatility": f"{stats['volatility']:.2f}",
                 "uptime_30d": f"{float(row['uptime_30d']):.2f}",
             },
-            "equity": equity, "drawdown": drawdown, "heartbeat_timeline": timeline, "outages": outages,
+            "equity": equity, "pnl_curve": pnl_curve, "nav_curve": nav_curve,
+            "drawdown": drawdown, "heartbeat_timeline": timeline, "outages": outages,
             "signals": [signal_view(conn, signal) for signal in signals],
             "positions": [],
             "alerts": [alert_view(alert) for alert in alert_rows],
@@ -936,8 +971,9 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
         # 组合曲线按日收盘聚合，并剔除手工资金变动造成的跳变。
         point_rows = conn.execute(
-            "SELECT runner_id, ts, equity FROM equity_points ORDER BY ts"
+            "SELECT runner_id, ts, equity, pnl FROM equity_points ORDER BY ts"
         ).fetchall()
+        initial_by_runner = {row["id"]: float(row["initial_equity"] or 0) for row in runner_rows}
         flow_rows = conn.execute("SELECT runner_id, ts, amount FROM cash_flows WHERE kind = 'flow' ORDER BY ts, id").fetchall()
         flows_by_runner: dict[str, list[sqlite3.Row]] = defaultdict(list)
         for flow in flow_rows:
@@ -945,15 +981,21 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         flow_index: dict[str, int] = defaultdict(int)
         cumulative: dict[str, float] = defaultdict(float)
         latest: dict[str, float] = {}
+        latest_pnl: dict[str, float] = {}
         by_day: dict[str, float] = {}
+        pnl_by_day: dict[str, float] = {}
         for point in point_rows:
             runner_id = point["runner_id"]
             flows = flows_by_runner.get(runner_id, [])
             while flow_index[runner_id] < len(flows) and flows[flow_index[runner_id]]["ts"] <= point["ts"]:
                 cumulative[runner_id] += float(flows[flow_index[runner_id]]["amount"])
                 flow_index[runner_id] += 1
-            latest[runner_id] = float(point["equity"]) - cumulative[runner_id]
+            adjusted_equity = float(point["equity"]) - cumulative[runner_id]
+            latest[runner_id] = adjusted_equity
+            fallback_pnl = adjusted_equity - initial_by_runner.get(runner_id, 0.0)
+            latest_pnl[runner_id] = float(point["pnl"]) if point["pnl"] is not None else fallback_pnl
             by_day[point["ts"][:10]] = sum(latest.values())
+            pnl_by_day[point["ts"][:10]] = sum(latest_pnl.values())
         curve = [
             {"ts": day + "T07:00:00Z", "nav": 0, "value": value}
             for day, value in sorted(by_day.items())
@@ -968,6 +1010,15 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         for index, point in enumerate(curve):
             point["nav"] = round(values[index] / first, 6)
             point["value"] = f"{values[index]:.2f}"
+        pnl_curve = [
+            {"ts": day + "T07:00:00Z", "nav": 0, "value": f"{value:.2f}"}
+            for day, value in sorted(pnl_by_day.items())
+        ]
+        pnl_curve = pnl_curve[-days:] if range_key != "all" else pnl_curve
+        nav_curve = [
+            {"ts": point["ts"], "nav": point["nav"], "value": f"{point['nav']:.6f}"}
+            for point in curve
+        ]
         benchmark = []
         for index, point in enumerate(curve):
             value = float(point["value"]) * (0.94 + index / max(1, len(curve)) * 0.10)
@@ -981,7 +1032,8 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
             "today_pnl_pct": f"{(today / max(1, total - today) * 100):.2f}",
             "running": sum(1 for row in runner_rows if row["status"] in ("running", "off_hours")),
             "total": len(runner_rows), "active_alerts": active_alerts, "range": range_key,
-            "equity_curve": curve, "drawdown_curve": drawdown,
+            "equity_curve": curve, "pnl_curve": pnl_curve, "nav_curve": nav_curve,
+            "drawdown_curve": drawdown,
             "metrics": {
                 "total_return_pct": f"{stats['total_return']:.2f}",
                 "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
@@ -1233,15 +1285,23 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         equity_value: float | None = None
         if "equity" in payload and payload["equity"] is not None:
             equity_value = require_number(payload["equity"], "equity", minimum=0)
-        if equity_value is not None:
-            equity = equity_value
+        pnl_value: float | None = None
+        if "pnl" in payload and payload["pnl"] is not None:
+            pnl_value = require_number(payload["pnl"], "pnl")
+        nav_value: float | None = None
+        if "nav" in payload and payload["nav"] is not None:
+            nav_value = require_number(payload["nav"], "nav")
+            if nav_value <= 0:
+                raise HTTPException(status_code=400, detail="nav 必须大于 0")
+        if equity_value is not None or pnl_value is not None or nav_value is not None:
+            equity = equity_value if equity_value is not None else float(runner["equity"] or 0)
             latest_point = conn.execute(
                 "SELECT ts FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 1",
                 (runner["id"],),
             ).fetchone()
             if latest_point and event_ts < latest_point["ts"]:
-                raise HTTPException(status_code=400, detail="equity.ts 早于该策略最新权益快照")
-            if float(runner["initial_equity"] or 0) <= 0 and equity > 0:
+                raise HTTPException(status_code=400, detail="数据时间早于该策略最新快照")
+            if equity_value is not None and float(runner["initial_equity"] or 0) <= 0 and equity > 0:
                 first_point = conn.execute(
                     "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
                     (runner["id"],),
@@ -1251,27 +1311,47 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             event_dt_parsed = dt_from(event_ts) or now_dt()
             local_midnight = event_dt_parsed.astimezone(CST).replace(hour=0, minute=0, second=0, microsecond=0)
             day_start = local_midnight.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            prior = conn.execute(
-                "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
-                (runner["id"], day_start),
-            ).fetchone()
-            day_flow = conn.execute(
-                "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ? AND ts <= ?",
-                (runner["id"], day_start, event_ts),
-            ).fetchone()["amount"]
-            if prior:
-                today_pnl = equity - float(prior["equity"]) - float(day_flow or 0)
-            else:
-                initial_ref = float(runner["initial_equity"] or 0)
-                if initial_ref <= 0:
-                    first_snapshot = conn.execute(
-                        "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
-                        (runner["id"],),
+            if pnl_value is not None:
+                prior_pnl = conn.execute(
+                    "SELECT pnl FROM equity_points WHERE runner_id = ? AND pnl IS NOT NULL AND ts < ? ORDER BY ts DESC LIMIT 1",
+                    (runner["id"], day_start),
+                ).fetchone()
+                if prior_pnl:
+                    today_pnl = pnl_value - float(prior_pnl["pnl"])
+                else:
+                    first_today = conn.execute(
+                        "SELECT pnl FROM equity_points WHERE runner_id = ? AND pnl IS NOT NULL AND ts >= ? ORDER BY ts LIMIT 1",
+                        (runner["id"], day_start),
                     ).fetchone()
-                    initial_ref = float(first_snapshot["equity"]) if first_snapshot else equity
-                today_pnl = equity - initial_ref - float(day_flow or 0)
-            conn.execute("UPDATE runners SET equity = ?, today_pnl = ? WHERE id = ?", (equity, today_pnl, runner["id"]))
-            conn.execute("INSERT INTO equity_points(runner_id, ts, equity) VALUES(?,?,?)", (runner["id"], event_ts, equity))
+                    today_pnl = (pnl_value - float(first_today["pnl"])) if first_today else 0.0
+                conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner["id"]))
+            elif equity_value is not None:
+                prior = conn.execute(
+                    "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+                    (runner["id"], day_start),
+                ).fetchone()
+                day_flow = conn.execute(
+                    "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ? AND ts <= ?",
+                    (runner["id"], day_start, event_ts),
+                ).fetchone()["amount"]
+                if prior:
+                    today_pnl = equity - float(prior["equity"]) - float(day_flow or 0)
+                else:
+                    initial_ref = float(runner["initial_equity"] or 0)
+                    if initial_ref <= 0:
+                        first_snapshot = conn.execute(
+                            "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
+                            (runner["id"],),
+                        ).fetchone()
+                        initial_ref = float(first_snapshot["equity"]) if first_snapshot else equity
+                    today_pnl = equity - initial_ref - float(day_flow or 0)
+                conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner["id"]))
+            if equity_value is not None:
+                conn.execute("UPDATE runners SET equity = ? WHERE id = ?", (equity, runner["id"]))
+            conn.execute(
+                "INSERT INTO equity_points(runner_id, ts, equity, pnl, nav) VALUES(?,?,?,?,?)",
+                (runner["id"], event_ts, equity, pnl_value, nav_value),
+            )
 
         if "loop" in payload and payload["loop"] is not None:
             loop = int(require_number(payload["loop"], "loop", minimum=0))

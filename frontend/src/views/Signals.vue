@@ -34,6 +34,11 @@ const pageSize = ref(20);
 const dateRange = ref<[number, number] | null>(null);
 const sortKey = ref<SortKey>('ts');
 const sortDir = ref<'asc' | 'desc'>('desc');
+const flashIds = ref<string[]>([]);
+let seenSignalIds = new Set<string>();
+let signalsInitialized = false;
+let flashTimer: number | undefined;
+let pollTimer: number | undefined;
 
 const filters = reactive({
   runnerId: '',
@@ -76,8 +81,25 @@ function shanghaiDayStart(ms: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - 8 * HOUR;
 }
 
-async function load(): Promise<void> {
-  loading.value = true;
+function markNewSignals(incoming: Signal[]): void {
+  const incomingIds = new Set(incoming.map((signal) => signal.id));
+  if (!signalsInitialized) {
+    seenSignalIds = incomingIds;
+    signalsInitialized = true;
+    return;
+  }
+  const newIds = incoming.filter((signal) => !seenSignalIds.has(signal.id)).map((signal) => signal.id);
+  seenSignalIds = incomingIds;
+  if (!newIds.length) return;
+  const flashing = new Set(flashIds.value);
+  newIds.forEach((id) => flashing.add(id));
+  flashIds.value = [...flashing];
+  window.clearTimeout(flashTimer);
+  flashTimer = window.setTimeout(() => { flashIds.value = []; }, 10000);
+}
+
+async function load(silent = false): Promise<void> {
+  if (!silent) loading.value = true;
   error.value = '';
   try {
     const query = {
@@ -103,10 +125,11 @@ async function load(): Promise<void> {
     total.value = lastRes.total;
     sumAmount.value = lastRes.sum_amount;
     runners.value = runnersRes.items;
+    markNewSignals(all);
   } catch (err) {
     error.value = err instanceof Error ? err.message : '信号加载失败';
   } finally {
-    loading.value = false;
+    if (!silent) loading.value = false;
   }
 }
 
@@ -115,6 +138,7 @@ function scheduleLoad(): void {
   window.clearTimeout(debounceTimer);
   debounceTimer = window.setTimeout(() => {
     page.value = 1;
+    signalsInitialized = false;
     load();
   }, 260);
 }
@@ -172,7 +196,7 @@ watch(
 watch(pageSize, () => {
   page.value = 1;
 });
-watch(() => settings.refreshSeq, load);
+watch(() => settings.refreshSeq, () => load());
 watch(pageCount, () => {
   if (page.value > pageCount.value) page.value = pageCount.value;
 });
@@ -181,9 +205,16 @@ onMounted(() => {
   const qRunner = route.query.runner_id;
   if (typeof qRunner === 'string') filters.runnerId = qRunner;
   load();
+  pollTimer = window.setInterval(() => {
+    if (!document.hidden) load(true);
+  }, 5000);
 });
 
-onBeforeUnmount(() => window.clearTimeout(debounceTimer));
+onBeforeUnmount(() => {
+  window.clearTimeout(debounceTimer);
+  window.clearTimeout(flashTimer);
+  window.clearInterval(pollTimer);
+});
 </script>
 
 <template>
@@ -217,7 +248,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 
     <div v-if="error" class="error-bar">
       <span class="dot" />{{ error }}
-      <n-button text size="tiny" @click="load">重试</n-button>
+      <n-button text size="tiny" @click="load()">重试</n-button>
     </div>
 
     <SectionCard flush>
@@ -248,7 +279,11 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
             </tr>
           </thead>
           <tbody>
-            <tr v-for="signal in pageRows" :key="signal.id">
+            <tr
+              v-for="signal in pageRows"
+              :key="signal.id"
+              :class="{ 'signal-flash': flashIds.includes(signal.id) }"
+            >
               <td class="mono nowrap" :title="signal.ts">{{ fmtDateTime(signal.ts) }}</td>
               <td class="truncate cell-strong"><router-link :to="'/strategies/' + signal.runner_id" class="cell-link">{{ signal.runner_name }}</router-link></td>
               <td class="muted nowrap">{{ signal.platform_label || '—' }}</td>
@@ -290,6 +325,13 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 </template>
 
 <style scoped>
+.signal-flash {
+  animation: signal-flash 1.3s ease-in-out infinite;
+}
+@keyframes signal-flash {
+  0%, 100% { background: rgba(91, 140, 255, 0.04); }
+  50% { background: rgba(91, 140, 255, 0.16); }
+}
 .filter-bar {
   display: flex;
   align-items: center;

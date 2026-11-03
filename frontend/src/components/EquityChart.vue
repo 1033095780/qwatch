@@ -18,12 +18,14 @@ const props = withDefaults(defineProps<{
   height?: number;
   valueLabel?: string;
   benchmarkLabel?: string;
+  valueMode?: 'money' | 'nav';
 }>(), {
   benchmark: null,
   showBenchmark: false,
   height: 300,
   valueLabel: '组合权益',
   benchmarkLabel: '沪深300（归一）',
+  valueMode: 'money',
 });
 
 const spanDays = computed(() => {
@@ -33,6 +35,7 @@ const spanDays = computed(() => {
 const intraday = computed(() => spanDays.value < 3);
 
 function fmtAxisValue(value: number): string {
+  if (props.valueMode === 'nav') return value.toFixed(2);
   const abs = Math.abs(value);
   if (abs >= 1e8) return (value / 1e8).toFixed(2) + '亿';
   if (abs >= 1e4) return (value / 1e4).toFixed(0) + '万';
@@ -74,7 +77,8 @@ const option = computed<EChartsOption>(() => {
           return (
             '<div style="display:flex;justify-content:space-between;gap:18px;margin-top:4px">' +
             '<span style="color:#9aa7bc">' + p.marker + ' ' + p.seriesName + '</span>' +
-            '<span style="font-family:\'JetBrains Mono\',Consolas,monospace">¥' + fmtMoney(v, 2) + '</span></div>'
+            '<span style="font-family:\'JetBrains Mono\',Consolas,monospace">' +
+            (props.valueMode === 'nav' ? v.toFixed(4) : '¥' + fmtMoney(v, 2)) + '</span></div>'
           );
         });
         return '<div style="font-size:11px;color:#9aa7bc">' + fmtDateTime(new Date(ts).toISOString()) + ' CST</div>' + lines.join('');

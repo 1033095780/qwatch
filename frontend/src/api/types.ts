@@ -139,6 +139,8 @@ export interface Overview {
   active_alerts: number;
   range: RangeKey;
   equity_curve: OverviewCurvePoint[];
+  pnl_curve: OverviewCurvePoint[];
+  nav_curve: OverviewCurvePoint[];
   drawdown_curve: DrawdownPoint[];
   metrics: OverviewMetrics;
   benchmark: OverviewCurvePoint[];
@@ -197,6 +199,8 @@ export interface RunnerDetail {
     uptime_30d: string;
   };
   equity: EquityPoint[];
+  pnl_curve: EquityPoint[];
+  nav_curve: EquityPoint[];
   drawdown: DrawdownPoint[];
   heartbeat_timeline: HeartbeatSegment[];
   outages: Outage[];

@@ -176,10 +176,15 @@ def _backfill_history(url: str, session: str, token: str, runner: dict[str, Any]
     scale = target / values[-1]
     values = [round(value * scale, 2) for value in values]
     now = datetime.now().astimezone()
+    base = values[0]
     for index, value in enumerate(values):
         day = now - timedelta(days=179 - index)
         ts = day.replace(hour=15, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
-        _request(url, "POST", "/api/v1/report", {"ts": ts, "equity": value}, token)
+        _request(url, "POST", "/api/v1/report", {
+            "ts": ts, "equity": value,
+            "pnl": round(value - base, 2),
+            "nav": round(value / base, 6),
+        }, token)
     print(f"补齐历史权益 {spec['name']}：{len(values)} 天，当前 {target:,.2f} CNY")
 
 def ensure_tokens(url: str, session: str, runners: dict[str, dict[str, Any]]) -> dict[str, str]:
@@ -265,7 +270,8 @@ def _run_strategy(spec: dict[str, Any], url: str, token: str, stop: threading.Ev
         return
 
     equity = float(spec["initial_equity"])
-    q.equity(round(equity, 2))
+    pnl_base = float(spec["initial_equity"]) * 0.78
+    q.equity(round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
     position: tuple[str, int] | None = None
     loops = signal_count = 0
     next_signal = time.monotonic() + rnd.uniform(*spec["signal_seconds"])
@@ -281,7 +287,7 @@ def _run_strategy(spec: dict[str, Any], url: str, token: str, stop: threading.Ev
                 next_signal = now + rnd.uniform(*spec["signal_seconds"])
             if now >= next_equity:
                 equity = max(1.0, equity * (1 + rnd.gauss(0, 0.001)))
-                q.equity(round(equity, 2))
+                q.equity(round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
                 next_equity = now + rnd.uniform(10, 20)
             stop.wait(TICK_S)
     finally:

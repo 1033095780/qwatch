@@ -39,6 +39,7 @@ const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
 const range = ref<RangeKey>('all');
+const chartView = ref<'pnl' | 'nav'>('pnl');
 const activeTab = ref('equity');
 const tokenOpen = ref(false);
 const capitalOpen = ref(false);
@@ -63,8 +64,19 @@ const tabs = computed<TabItem[]>(() => [
   { key: 'config', label: '配置' },
 ]);
 
+const chartPoints = computed(() => {
+  if (!detail.value) return [];
+  return chartView.value === 'pnl' ? detail.value.pnl_curve : detail.value.nav_curve;
+});
+
+const periodPnl = computed(() => {
+  const curve = chartPoints.value;
+  if (curve.length < 2) return null;
+  return Number(curve[curve.length - 1].value) - Number(curve[0].value);
+});
+
 const periodReturn = computed(() => {
-  const curve = detail.value?.equity ?? [];
+  const curve = chartPoints.value;
   if (curve.length < 2) return null;
   const first = Number(curve[0].value);
   const last = Number(curve[curve.length - 1].value);
@@ -196,16 +208,30 @@ onMounted(() => load(true));
         <div v-show="activeTab === 'equity'" class="tab-panel">
           <div class="panel-head">
             <div>
-              <h2 class="panel-title">净值与回撤</h2>
-              <p class="panel-sub">策略归因口径（非资金曲线）· Asia/Shanghai</p>
+              <h2 class="panel-title">{{ chartView === 'pnl' ? '盈亏与回撤' : '净值与回撤' }}</h2>
+              <p class="panel-sub">策略自报口径 · Asia/Shanghai</p>
             </div>
-            <RangeTabs v-model="range" />
+            <div class="chart-head-actions">
+              <div class="chart-view-switch">
+                <button type="button" :class="{ active: chartView === 'pnl' }" @click="chartView = 'pnl'">盈亏</button>
+                <button type="button" :class="{ active: chartView === 'nav' }" @click="chartView = 'nav'">净值</button>
+              </div>
+              <RangeTabs v-model="range" />
+            </div>
           </div>
           <div :class="{ dimmed: refreshing }">
-            <EquityChart :data="detail.equity" :height="300" value-label="策略净值（资金调整）" />
+            <EquityChart
+              :data="chartPoints"
+              :height="300"
+              :value-mode="chartView === 'nav' ? 'nav' : 'money'"
+              :value-label="chartView === 'pnl' ? '累计盈亏' : '净值'"
+            />
             <div class="dd-head">
               <span class="eyebrow">回撤</span>
-              <span v-if="periodReturn !== null" class="muted">
+              <span v-if="chartView === 'pnl' && periodPnl !== null" class="muted">
+                区间盈亏 <span class="num" :class="pnlClass(periodPnl)">{{ signedMoney(String(periodPnl)) }}</span>
+              </span>
+              <span v-else-if="chartView === 'nav' && periodReturn !== null" class="muted">
                 区间收益 <span class="num" :class="pnlClass(periodReturn)">{{ fmtPct(periodReturn) }}</span>
               </span>
               <span class="spacer" />
@@ -353,6 +379,35 @@ onMounted(() => load(true));
 </template>
 
 <style scoped>
+.chart-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.chart-view-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.chart-view-switch button {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chart-view-switch button.active {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));

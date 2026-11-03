@@ -61,7 +61,9 @@ CREATE TABLE IF NOT EXISTS equity_points (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   runner_id TEXT NOT NULL,
   ts TEXT NOT NULL,
-  equity REAL NOT NULL
+  equity REAL NOT NULL,
+  pnl REAL,
+  nav REAL
 );
 CREATE INDEX IF NOT EXISTS idx_equity_runner_ts ON equity_points(runner_id, ts);
 CREATE TABLE IF NOT EXISTS cash_flows (
@@ -181,6 +183,11 @@ def init_db() -> None:
         flow_columns = [row["name"] for row in conn.execute("PRAGMA table_info(cash_flows)").fetchall()]
         if "kind" not in flow_columns:
             conn.execute("ALTER TABLE cash_flows ADD COLUMN kind TEXT NOT NULL DEFAULT 'flow'")
+        equity_columns = [row["name"] for row in conn.execute("PRAGMA table_info(equity_points)").fetchall()]
+        if "pnl" not in equity_columns:
+            conn.execute("ALTER TABLE equity_points ADD COLUMN pnl REAL")
+        if "nav" not in equity_columns:
+            conn.execute("ALTER TABLE equity_points ADD COLUMN nav REAL")
 
 
 def loads(value: str | None, default: Any) -> Any:

@@ -101,6 +101,8 @@ class Qwatch:
         amount: Optional[float] = None,
         account: Optional[str] = None,
         equity: Optional[float] = None,
+        pnl: Optional[float] = None,
+        nav: Optional[float] = None,
         msg: Optional[str] = None,
         id: Optional[str] = None,
     ) -> str:
@@ -137,6 +139,10 @@ class Qwatch:
             payload["account"] = str(account).strip()
         if equity is not None:
             payload["equity"] = self._number(equity, "equity")
+        if pnl is not None:
+            payload["pnl"] = self._number(pnl, "pnl")
+        if nav is not None:
+            payload["nav"] = self._number(nav, "nav")
         if msg:
             payload["msg"] = str(msg).strip()[:200]
         payload["id"] = str(id).strip() if id else "sig_" + uuid.uuid4().hex
@@ -179,9 +185,13 @@ class Qwatch:
                 self._last_tick = str(last_tick)
             return self._loop
 
-    def equity(self, value: float, msg: Optional[str] = None) -> None:
-        """只更新权益（也算一次心跳）。出入金请在 qwatch 策略详情里手工记录。"""
+    def equity(self, value: float, pnl: Optional[float] = None, nav: Optional[float] = None, msg: Optional[str] = None) -> None:
+        """更新权益；可同时提交策略累计盈亏 pnl 和策略净值 nav（都由策略自己计算）。"""
         payload: Dict[str, Any] = {"ts": _now_iso(), "equity": self._number(value, "equity")}
+        if pnl is not None:
+            payload["pnl"] = self._number(pnl, "pnl")
+        if nav is not None:
+            payload["nav"] = self._number(nav, "nav")
         if msg:
             payload["msg"] = str(msg).strip()[:200]
         self._enqueue(payload)

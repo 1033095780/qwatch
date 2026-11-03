@@ -28,27 +28,40 @@ const refreshing = ref(false);
 const error = ref('');
 const range = ref<RangeKey>('all');
 const scope = ref<string>('portfolio');
+const chartView = ref<'pnl' | 'nav'>('pnl');
 const metricsOpen = ref(true);
 const runnerDetail = ref<RunnerDetail | null>(null);
 const scopeLoading = ref(false);
 const showDrawdown = ref(localStorage.getItem('qwatch.overview.drawdown') !== '0');
 const latestSignal = ref<Signal | null>(null);
 const bannerVisible = ref(false);
-const flashSignalId = ref('');
-let lastSignalId = '';
+const flashSignalIds = ref<string[]>([]);
+let seenSignalIds = new Set<string>();
+let signalsInitialized = false;
 let pollTimer: number | undefined;
 let flashTimer: number | undefined;
 let bannerTimer: number | undefined;
 
 const isPortfolio = computed(() => scope.value === 'portfolio');
 const activeRunner = computed(() => (isPortfolio.value ? null : data.value?.runners.find((r) => r.id === scope.value) ?? null));
-const chartPoints = computed(() => (isPortfolio.value ? data.value?.equity_curve ?? [] : runnerDetail.value?.equity ?? []));
-const lastNav = computed(() => {
-  const points = runnerDetail.value?.equity ?? [];
-  return points.length ? Number(points[points.length - 1].nav ?? 0).toFixed(4) : null;
+const chartPoints = computed(() => {
+  if (isPortfolio.value) {
+    return (chartView.value === 'pnl' ? data.value?.pnl_curve : data.value?.nav_curve) ?? [];
+  }
+  return (chartView.value === 'pnl' ? runnerDetail.value?.pnl_curve : runnerDetail.value?.nav_curve) ?? [];
+});
+const latestChartValue = computed(() => {
+  const points = chartPoints.value;
+  return points.length ? Number(points[points.length - 1].value) : null;
 });
 
 const activeAlertCount = computed(() => data.value?.active_alerts ?? 0);
+
+const periodPnl = computed(() => {
+  const curve = chartPoints.value;
+  if (curve.length < 2) return null;
+  return Number(curve[curve.length - 1].value) - Number(curve[0].value);
+});
 
 const periodReturn = computed(() => {
   const curve = chartPoints.value;
@@ -100,29 +113,25 @@ function clearSignalTimers(): void {
 }
 
 function detectNewSignal(next: Overview): void {
-  const latest = next.recent_signals[0];
-  if (!latest) return;
-  if (!lastSignalId) {
-    lastSignalId = latest.id;
+  const current = next.recent_signals;
+  if (!current.length) return;
+  const currentIds = new Set(current.map((signal) => signal.id));
+  if (!signalsInitialized) {
+    seenSignalIds = currentIds;
+    signalsInitialized = true;
     return;
   }
-  if (latest.id === lastSignalId) return;
-  lastSignalId = latest.id;
-  latestSignal.value = latest;
-  flashSignalId.value = latest.id;
+  const newSignals = current.filter((signal) => !seenSignalIds.has(signal.id));
+  seenSignalIds = currentIds;
+  if (!newSignals.length) return;
+  latestSignal.value = current[0];
+  const flashing = new Set(flashSignalIds.value);
+  newSignals.forEach((signal) => flashing.add(signal.id));
+  flashSignalIds.value = [...flashing];
   bannerVisible.value = true;
   clearSignalTimers();
-  flashTimer = window.setTimeout(() => { flashSignalId.value = ''; }, 10000);
+  flashTimer = window.setTimeout(() => { flashSignalIds.value = []; }, 10000);
   bannerTimer = window.setTimeout(() => { bannerVisible.value = false; }, 10000);
-}
-
-function focusLatestSignal(): void {
-  const signal = latestSignal.value;
-  if (!signal) return;
-  bannerVisible.value = false;
-  const target = document.getElementById('latest-signal-' + signal.id);
-  target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  (target as HTMLElement | null)?.focus({ preventScroll: true });
 }
 
 function toggleDrawdown(): void {
@@ -182,8 +191,8 @@ onBeforeUnmount(() => {
       class="signal-banner"
       role="button"
       tabindex="0"
-      @click="focusLatestSignal"
-      @keydown.enter="focusLatestSignal"
+      @click="$router.push('/signals')"
+      @keydown.enter="$router.push('/signals')"
     >
       <span class="banner-pulse" />
       <strong>最新信号</strong>
@@ -192,8 +201,6 @@ onBeforeUnmount(() => {
       <span class="banner-sep">·</span>
       <span class="mono">{{ latestSignal.instrument }}</span>
       <span>{{ SIGNAL_ACTION_LABELS[latestSignal.action] }}</span>
-      <span class="banner-spacer" />
-      <span class="banner-action">点击定位</span>
     </div>
 
     <div v-if="loading && !data" class="page">
@@ -296,7 +303,7 @@ onBeforeUnmount(() => {
       </section>
 
       <div class="grid grid-main">
-        <SectionCard :title="isPortfolio ? '组合净值' : activeRunner?.name || '策略净值'">
+        <SectionCard :title="(isPortfolio ? '组合' : activeRunner?.name || '策略') + (chartView === 'pnl' ? '盈亏' : '净值')">
           <template #extra>
             <div class="scope-switch">
               <button type="button" class="scope-item" :class="{ active: isPortfolio }" @click="scope = 'portfolio'">组合</button>
@@ -312,6 +319,10 @@ onBeforeUnmount(() => {
                 {{ runner.name }}
               </button>
             </div>
+            <div class="chart-view-switch">
+              <button type="button" :class="{ active: chartView === 'pnl' }" @click="chartView = 'pnl'">盈亏</button>
+              <button type="button" :class="{ active: chartView === 'nav' }" @click="chartView = 'nav'">净值</button>
+            </div>
             <RangeTabs v-model="range" />
           </template>
 
@@ -319,15 +330,23 @@ onBeforeUnmount(() => {
             <EquityChart
               :data="chartPoints"
               :height="300"
-              :value-label="isPortfolio ? '组合权益（资金调整）' : '策略权益（资金调整）'"
+              :value-mode="chartView === 'nav' ? 'nav' : 'money'"
+              :value-label="chartView === 'pnl' ? '累计盈亏' : '净值'"
             />
             <div class="chart-foot">
               <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
-              <span v-if="periodReturn !== null">
+              <span v-if="chartView === 'pnl' && periodPnl !== null">
+                区间盈亏 <PnlText :value="periodPnl" :pct="null" :money="true" :digits="2" size="sm" />
+              </span>
+              <span v-else-if="chartView === 'nav' && periodReturn !== null">
                 区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
               </span>
-              <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span> · 曲线已剔除资金变动</span>
-              <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
+              <span v-if="chartView === 'pnl' && latestChartValue !== null" class="muted">
+                最新盈亏 <span class="num" :class="pnlClass(latestChartValue)">¥{{ fmtMoney(latestChartValue) }}</span>
+              </span>
+              <span v-else-if="chartView === 'nav' && latestChartValue !== null" class="muted">
+                最新净值 <span class="num mono">{{ latestChartValue.toFixed(4) }}</span>
+              </span>
               <span class="spacer" />
               <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>
               <button type="button" class="dd-toggle" @click="toggleDrawdown">
@@ -398,9 +417,7 @@ onBeforeUnmount(() => {
                 <tr
                   v-for="signal in data.recent_signals"
                   :key="signal.id"
-                  :id="'latest-signal-' + signal.id"
-                  tabindex="-1"
-                  :class="{ 'signal-flash': signal.id === flashSignalId }"
+                  :class="{ 'signal-flash': flashSignalIds.includes(signal.id) }"
                 >
                   <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
                   <td class="truncate">{{ signal.runner_name }}</td>
@@ -451,6 +468,27 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.chart-view-switch {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+.chart-view-switch button {
+  height: 22px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chart-view-switch button.active {
+  background: var(--primary-soft);
+  color: var(--text);
+}
 .scope-switch {
   display: flex;
   align-items: center;
@@ -601,13 +639,6 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--primary);
   animation: banner-pulse 1.2s ease-in-out infinite;
-}
-.banner-spacer {
-  flex: 1;
-}
-.banner-action {
-  color: var(--primary);
-  white-space: nowrap;
 }
 @keyframes banner-in {
   from { opacity: 0; transform: translate(-50%, -6px); }
