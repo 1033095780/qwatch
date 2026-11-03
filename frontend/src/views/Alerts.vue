@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Alerts.vue — 告警中心：活跃/历史 Tabs、级别/时间排序、确认与静默。
+// Alerts.vue — 告警中心：心跳丢失 / 策略卡死（统一 P0 红色）· 活跃/历史 Tabs · 确认与静默。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NDropdown, useMessage } from 'naive-ui';
 import { BellOff, Check } from 'lucide-vue-next';
@@ -21,7 +21,6 @@ const historyItems = ref<Alert[]>([]);
 const loading = ref(true);
 const error = ref('');
 const tab = ref('active');
-const sortBy = ref<'time' | 'severity'>('time');
 const busyId = ref('');
 
 const silenceOptions = [
@@ -30,14 +29,10 @@ const silenceOptions = [
   { label: '静默 24 小时', key: '24h' },
 ];
 
+/** 告警规则展示名：后端只产出心跳丢失 / 策略卡死两类，统一按 P0 红色展示 */
 const RULE_LABEL: Record<string, string> = {
   heartbeat_lost: '心跳丢失',
   runner_stalled: '策略卡死',
-  market_data_stale: '行情断流',
-  drawdown_breach: '回撤超阈值',
-  daily_loss_limit: '日亏损超限',
-  fill_burst: '成交突发',
-  risk_limit: '风控触发',
 };
 
 const STATUS_LABEL: Record<Alert['status'], string> = {
@@ -56,14 +51,7 @@ const tabs = computed<TabItem[]>(() => [
 
 const currentItems = computed(() => {
   const source = tab.value === 'active' ? activeItems.value : historyItems.value;
-  const severityRank: Record<string, number> = { P0: 0, P1: 1, P2: 2 };
-  return [...source].sort((a, b) => {
-    if (sortBy.value === 'severity') {
-      const diff = (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9);
-      if (diff !== 0) return diff;
-    }
-    return Date.parse(b.starts_at) - Date.parse(a.starts_at);
-  });
+  return [...source].sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at));
 });
 
 function durationOf(alert: Alert): string {
@@ -126,7 +114,7 @@ onMounted(() => load(true));
   <div class="page">
     <PageHeader
       title="告警中心"
-      :subtitle="firingCount + ' 条触发中 · ' + ackedCount + ' 条已确认 · P0 立即通知，P1 合并，P2 可静默 · 时间 Asia/Shanghai'"
+      :subtitle="firingCount + ' 条触发中 · ' + ackedCount + ' 条已确认 · 心跳丢失 / 策略卡死统一 P0 红色告警 · 时间 Asia/Shanghai'"
     >
       <template #extra>
         <span class="chip">确认 / 静默立即生效</span>
@@ -134,16 +122,7 @@ onMounted(() => load(true));
     </PageHeader>
 
     <section class="card alerts-card">
-      <div class="head-row">
-        <TabBar v-model="tab" :tabs="tabs" />
-        <div class="sort-wrap">
-          <span class="faint">排序</span>
-          <div class="seg">
-            <button type="button" :class="{ active: sortBy === 'time' }" @click="sortBy = 'time'">时间</button>
-            <button type="button" :class="{ active: sortBy === 'severity' }" @click="sortBy = 'severity'">级别</button>
-          </div>
-        </div>
-      </div>
+      <TabBar v-model="tab" :tabs="tabs" />
 
       <div v-if="error" class="error-bar" style="margin-top: 14px">
         <span class="dot" />{{ error }}
@@ -157,15 +136,15 @@ onMounted(() => load(true));
       <div v-else-if="!currentItems.length" class="empty-wrap">
         <EmptyState
           :title="tab === 'active' ? '当前没有活跃告警' : '暂无历史告警'"
-          :description="tab === 'active' ? '所有策略心跳、行情与回撤均在阈值内' : '告警恢复后会归档到这里'"
+          :description="tab === 'active' ? '所有策略心跳与运行状态均正常' : '告警恢复后会归档到这里'"
         />
       </div>
 
       <div v-else class="alert-list">
-        <article v-for="alert in currentItems" :key="alert.id" class="alert-card" :class="alert.severity">
+        <article v-for="alert in currentItems" :key="alert.id" class="alert-card P0">
           <div class="alert-head">
             <div class="head-left">
-              <SeverityTag :severity="alert.severity" />
+              <SeverityTag severity="P0" />
               <span class="rule">{{ RULE_LABEL[alert.rule] ?? alert.rule }}</span>
               <span class="rule-key mono">{{ alert.rule }}</span>
               <span class="status-chip" :class="alert.status">{{ STATUS_LABEL[alert.status] }}</span>
@@ -214,21 +193,6 @@ onMounted(() => load(true));
 .alerts-card {
   padding: 0 20px 16px;
 }
-.head-row {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-bottom: 4px;
-}
-.sort-wrap {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  padding-bottom: 6px;
-}
 .loading-list {
   display: flex;
   flex-direction: column;
@@ -262,8 +226,6 @@ onMounted(() => load(true));
   width: 2px;
 }
 .alert-card.P0::before { background: #f04438; }
-.alert-card.P1::before { background: #f5a524; }
-.alert-card.P2::before { background: #38bdf8; }
 .alert-card:hover {
   border-color: var(--border-strong);
   background: rgba(21, 28, 44, 0.8);

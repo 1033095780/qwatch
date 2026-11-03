@@ -139,7 +139,7 @@ onMounted(() => load(true));
         />
         <MetricCard label="夏普" :value="detail.metrics.sharpe" sub="近 180 个交易日 · 年化" />
         <MetricCard label="最大回撤" :value="fmtPct(detail.metrics.max_drawdown_pct, 2, false)" sub="峰值回落" />
-        <MetricCard label="胜率" :value="detail.metrics.win_rate_pct + '%'" sub="近 30 天" />
+        <MetricCard label="日胜率" :value="detail.metrics.win_rate_pct + '%'" sub="近 30 个交易日" />
         <MetricCard label="盈亏比" :value="detail.metrics.profit_factor" sub="总盈利 / 总亏损" />
       </div>
 

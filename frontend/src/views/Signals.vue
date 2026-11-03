@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// Signals.vue — 交易信号：多条件筛选 + 本地排序/分页（一次取全量 ≤200）+ CSV 导出。
+// Signals.vue — 交易信号：多条件筛选（平台/市场选项取自 runners 实际值）+ 本地排序/分页（一次取全量 ≤200）+ CSV 导出。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, NDatePicker, NInput, NSelect, useMessage } from 'naive-ui';
-import { ArrowDown, ArrowUp, Download, FilterX, Search } from 'lucide-vue-next';
+import { ArrowDown, ArrowUp, Download, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Runner, Signal, SignalStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
-import { MARKET_LABELS, PLATFORM_OPTIONS, SIGNAL_ACTION_LABELS, STRATEGY_TYPE_OPTIONS } from '@/utils/catalog';
+import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
@@ -40,21 +40,25 @@ const filters = reactive({
   runnerId: '',
   platform: '',
   market: '',
-  strategyType: '',
   side: '',
   status: '',
-  tag: '',
   instrument: '',
 });
 
 const withAll = (label: string, options: { value: string; label: string }[]) => [{ label, value: '' }, ...options];
 
 const runnerOptions = computed(() => withAll('全部策略', runners.value.map((r) => ({ label: r.name, value: r.id }))));
-const platformOptions = withAll('全部平台', PLATFORM_OPTIONS);
-const marketOptions = withAll('全部市场', (Object.keys(MARKET_LABELS) as (keyof typeof MARKET_LABELS)[])
-  .filter((key) => key !== 'HK')
-  .map((key) => ({ label: MARKET_LABELS[key], value: key })));
-const strategyTypeOptions = withAll('全部类型', STRATEGY_TYPE_OPTIONS);
+/** 平台/市场选项取自 runners 实际值，避免展示库里并不存在的枚举 */
+const platformOptions = computed(() => {
+  const seen = new Map<string, string>();
+  runners.value.forEach((r) => { if (r.platform) seen.set(r.platform, r.platform_label || r.platform); });
+  return withAll('全部平台', [...seen].map(([value, label]) => ({ value, label })));
+});
+const marketOptions = computed(() => {
+  const seen = new Map<string, string>();
+  runners.value.forEach((r) => { if (r.market) seen.set(r.market, MARKET_LABELS[r.market] ?? r.market); });
+  return withAll('全部市场', [...seen].map(([value, label]) => ({ value, label })));
+});
 const sideOptions = withAll('全部方向', [{ label: '买入', value: 'buy' }, { label: '卖出', value: 'sell' }]);
 const statusOptions: { label: string; value: '' | SignalStatus }[] = [
   { label: '全部状态', value: '' },
@@ -62,17 +66,6 @@ const statusOptions: { label: string; value: '' | SignalStatus }[] = [
   { label: '待执行', value: 'pending' },
   { label: '已忽略', value: 'ignored' },
 ];
-const tagOptions = computed(() => {
-  const tags = new Set<string>();
-  runners.value.forEach((r) => r.tags.forEach((tag) => tags.add(tag)));
-  return withAll('全部标签', [...tags].sort().map((tag) => ({ label: tag, value: tag })));
-});
-
-const hasFilter = computed(
-  () => !!(filters.runnerId || filters.platform || filters.market || filters.strategyType
-    || filters.side || filters.status || filters.tag || filters.instrument || dateRange.value),
-);
-
 const sortedItems = computed(() => {
   const dir = sortDir.value === 'asc' ? 1 : -1;
   return [...items.value].sort((a, b) => {
@@ -99,10 +92,8 @@ async function load(): Promise<void> {
       runner_id: filters.runnerId || undefined,
       platform: filters.platform || undefined,
       market: filters.market || undefined,
-      strategy_type: filters.strategyType || undefined,
       side: filters.side || undefined,
       status: filters.status || undefined,
-      tag: filters.tag || undefined,
       instrument: filters.instrument.trim() || undefined,
       from: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[0])).toISOString() : undefined,
       to: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[1]) + DAY - 1).toISOString() : undefined,
@@ -148,20 +139,6 @@ function sortIcon(key: SortKey): string {
   return sortDir.value === 'desc' ? '↓' : '↑';
 }
 
-function resetFilters(): void {
-  filters.runnerId = '';
-  filters.platform = '';
-  filters.market = '';
-  filters.strategyType = '';
-  filters.side = '';
-  filters.status = '';
-  filters.tag = '';
-  filters.instrument = '';
-  dateRange.value = null;
-  page.value = 1;
-  load();
-}
-
 function csvCell(value: string | number): string {
   const s = String(value ?? '');
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
@@ -194,7 +171,7 @@ function exportCsv(): void {
 }
 
 watch(
-  () => [filters.runnerId, filters.platform, filters.market, filters.strategyType, filters.side, filters.status, filters.tag, filters.instrument, dateRange.value],
+  () => [filters.runnerId, filters.platform, filters.market, filters.side, filters.status, filters.instrument, dateRange.value],
   scheduleLoad,
   { deep: true },
 );
@@ -217,7 +194,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 
 <template>
   <div class="page">
-    <PageHeader title="交易信号" subtitle="跨策略 / 平台 / 市场 / 类型 / 标签的信号流水 · Asia/Shanghai">
+    <PageHeader title="交易信号" subtitle="跨策略 / 平台 / 市场 / 方向 / 状态的信号流水 · Asia/Shanghai">
       <template #extra>
         <n-button size="small" @click="exportCsv">
           <template #icon><Download :size="14" /></template>
@@ -231,17 +208,12 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
         <n-select v-model:value="filters.runnerId" :options="runnerOptions" size="small" class="f-select" />
         <n-select v-model:value="filters.platform" :options="platformOptions" size="small" class="f-select-sm" />
         <n-select v-model:value="filters.market" :options="marketOptions" size="small" class="f-select-sm" />
-        <n-select v-model:value="filters.strategyType" :options="strategyTypeOptions" size="small" class="f-select-sm" />
         <n-select v-model:value="filters.side" :options="sideOptions" size="small" class="f-select-xs" />
         <n-select v-model:value="filters.status" :options="statusOptions" size="small" class="f-select-xs" />
-        <n-select v-model:value="filters.tag" :options="tagOptions" size="small" class="f-select-sm" />
         <n-input v-model:value="filters.instrument" clearable placeholder="品种代码，如 rb2601" size="small" class="f-input">
           <template #prefix><Search :size="13" /></template>
         </n-input>
         <n-date-picker v-model:value="dateRange" type="daterange" size="small" clearable class="f-date" />
-        <button v-if="hasFilter" type="button" class="reset" @click="resetFilters">
-          <FilterX :size="13" /> 清空
-        </button>
       </div>
       <div class="summary">
         <span class="muted">命中 <span class="num">{{ total }}</span> 条</span>
@@ -262,12 +234,8 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
       <EmptyState
         v-else-if="!sortedItems.length && !loading"
         title="没有匹配的信号"
-        :description="hasFilter ? '调整筛选条件或清空后重试' : '策略上报交易信号后会出现在这里'"
-      >
-        <template #action>
-          <n-button v-if="hasFilter" size="small" @click="resetFilters">清空筛选</n-button>
-        </template>
-      </EmptyState>
+        description="调整筛选条件后重试，或等待策略上报交易信号"
+      />
       <div v-else class="tbl-wrap">
         <div class="swipe-hint">左右滑动查看完整列 →</div>
         <table class="tbl">
@@ -362,20 +330,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 .f-date {
   width: 230px;
 }
-.reset {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 0 2px;
-}
-.reset:hover {
-  color: var(--primary);
-}
 .summary {
   display: flex;
   align-items: center;
@@ -464,9 +418,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
     grid-column: 1 / -1;
     width: 100%;
     min-width: 0;
-  }
-  .reset {
-    justify-self: start;
   }
   .summary {
     justify-content: space-between;

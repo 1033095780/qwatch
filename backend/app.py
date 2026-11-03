@@ -151,16 +151,15 @@ def sparkline_of(conn: sqlite3.Connection, runner_id: str) -> list[float]:
     return values or [0.0]
 
 
-def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, float]:
-    """基于最近 180 个权益点计算夏普、回撤、盈亏比、卡玛、波动率。"""
-    rows = conn.execute(
-        "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 180", (runner_id,)
-    ).fetchall()
-    values = [float(row["equity"]) for row in reversed(rows)]
-    empty = {"sharpe": 0.0, "max_drawdown": 0.0, "profit_factor": 0.0, "calmar": 0.0, "volatility": 0.0, "total_return": 0.0}
+def series_analytics(values: list[float]) -> dict[str, float]:
+    """基于日频权益序列计算风险指标：夏普、回撤、盈亏比、卡玛、波动率、区间/年化收益（252 交易日口径）。"""
+    empty = {
+        "sharpe": 0.0, "max_drawdown": 0.0, "profit_factor": 0.0, "calmar": 0.0,
+        "volatility": 0.0, "total_return": 0.0, "annualized_return": 0.0, "win_rate": 0.0,
+    }
     if len(values) < 2 or values[0] <= 0:
         return empty
-    returns = [(values[i] / values[i - 1] - 1) for i in range(1, len(values))]
+    returns = [(values[index] / values[index - 1] - 1) for index in range(1, len(values))]
     mean = sum(returns) / len(returns)
     variance = sum((item - mean) ** 2 for item in returns) / len(returns)
     std = math.sqrt(variance)
@@ -188,7 +187,30 @@ def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, floa
         "calmar": round(calmar, 2),
         "volatility": round(std * math.sqrt(252) * 100, 2),
         "total_return": round(total_return * 100, 2),
+        "annualized_return": round(annual_return * 100, 2),
+        "win_rate": round(sum(1 for item in returns[-30:] if item > 0) / max(1, len(returns[-30:])) * 100, 1),
     }
+
+
+def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, float]:
+    """按日收盘权益计算风险指标，避免盘中高频点把年化指标放大。"""
+    rows = conn.execute(
+        "SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 5000", (runner_id,)
+    ).fetchall()
+    by_day: dict[str, float] = {}
+    for row in rows:
+        by_day[row["ts"][:10]] = float(row["equity"])
+    return series_analytics(list(by_day.values())[-180:])
+
+
+def drawdown_curve(points: list[dict[str, Any]], values: list[float]) -> list[dict[str, Any]]:
+    """按峰值回落计算回撤曲线：value 为回撤百分比（<=0）。"""
+    peak = 0.0
+    curve = []
+    for point, value in zip(points, values):
+        peak = max(peak, value)
+        curve.append({"ts": point["ts"], "value": round((value / peak - 1) * 100, 2) if peak else 0.0})
+    return curve
 
 
 def heartbeat_bars(status: str) -> list[str]:
@@ -221,7 +243,7 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
         "sharpe": f"{stats['sharpe']:.2f}",
         "profit_factor": f"{stats['profit_factor']:.2f}",
-        "win_rate_pct": f"{float(row['win_rate']):.1f}",
+        "win_rate_pct": f"{stats['win_rate']:.1f}",
         "heartbeat_bars": heartbeat_bars(row["status"]),
         "uptime_24h": "99.90" if row["status"] == "running" else "0.00",
         "last_heartbeat": row["last_seen"] or row["created_at"],
@@ -473,10 +495,11 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
             "runner": runner_view(conn, row), "range": range_key,
             "metrics": {
                 "total_return_pct": f"{stats['total_return']:.2f}",
+                "annualized_return_pct": f"{stats['annualized_return']:.2f}",
                 "today_pnl": f"{float(row['today_pnl']):.2f}",
                 "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
                 "sharpe": f"{stats['sharpe']:.2f}",
-                "win_rate_pct": f"{float(row['win_rate']):.1f}",
+                "win_rate_pct": f"{stats['win_rate']:.1f}",
                 "profit_factor": f"{stats['profit_factor']:.2f}",
                 "calmar": f"{stats['calmar']:.2f}",
                 "volatility": f"{stats['volatility']:.2f}",
@@ -505,22 +528,29 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         total = sum(float(row["equity"]) for row in runner_rows)
         today = sum(float(row["today_pnl"]) for row in runner_rows)
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status != 'resolved'").fetchone()["n"]
-        points = conn.execute("SELECT runner_id, ts, equity FROM equity_points ORDER BY ts").fetchall()
-        by_day: dict[str, dict[str, float]] = {}
-        for point in points:
-            day = point["ts"][:10]
-            by_day.setdefault(day, {})[point["runner_id"]] = float(point["equity"])
-        curve = []
-        for day in sorted(by_day):
-            value = sum(by_day[day].values())
-            curve.append({"ts": day + "T07:00:00Z", "nav": 0, "value": value})
+        # 组合曲线按日收盘聚合：盘中高频点不会把夏普/年化指标放大。
+        point_rows = conn.execute(
+            "SELECT runner_id, ts, equity FROM equity_points ORDER BY ts LIMIT 5000"
+        ).fetchall()
+        latest: dict[str, float] = {}
+        by_day: dict[str, float] = {}
+        for point in point_rows:
+            latest[point["runner_id"]] = float(point["equity"])
+            by_day[point["ts"][:10]] = sum(latest.values())
+        curve = [
+            {"ts": day + "T07:00:00Z", "nav": 0, "value": value}
+            for day, value in sorted(by_day.items())
+        ]
         if not curve:
             curve = [{"ts": iso_now(), "nav": 1, "value": total}]
-        curve = curve[-days:]
-        first = curve[0]["value"] or 1
+        curve = curve[-days:] if range_key != "all" else curve
+        values = [float(point["value"]) for point in curve]
+        stats = series_analytics(values)
+        drawdown = drawdown_curve(curve, values)
+        first = values[0] or 1
         for index, point in enumerate(curve):
-            point["nav"] = round(point["value"] / first, 6)
-            point["value"] = f"{point['value']:.2f}"
+            point["nav"] = round(values[index] / first, 6)
+            point["value"] = f"{values[index]:.2f}"
         benchmark = []
         for index, point in enumerate(curve):
             value = float(point["value"]) * (0.94 + index / max(1, len(curve)) * 0.10)
@@ -534,7 +564,17 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
             "today_pnl_pct": f"{(today / max(1, total - today) * 100):.2f}",
             "running": sum(1 for row in runner_rows if row["status"] == "running"),
             "total": len(runner_rows), "active_alerts": active_alerts, "range": range_key,
-            "equity_curve": curve, "benchmark": benchmark, "runners": runners,
+            "equity_curve": curve, "drawdown_curve": drawdown,
+            "metrics": {
+                "total_return_pct": f"{stats['total_return']:.2f}",
+                "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
+                "sharpe": f"{stats['sharpe']:.2f}",
+                "annualized_return_pct": f"{stats['annualized_return']:.2f}",
+                "calmar": f"{stats['calmar']:.2f}",
+                "volatility": f"{stats['volatility']:.2f}",
+                "profit_factor": f"{stats['profit_factor']:.2f}",
+            },
+            "benchmark": benchmark, "runners": runners,
             "alerts": [alert_view(row) for row in alert_rows],
             "recent_signals": [signal_view(conn, row) for row in recent],
         }
@@ -732,6 +772,7 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
     with connect() as conn:
         token, runner = strategy_token(conn, authorization)
         now = iso_now()
+        event_ts = parse_iso(str(payload["ts"])) if payload.get("ts") else now
         conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?", (now, token["id"]))
         conn.execute("UPDATE runners SET last_seen = ?, status = 'running', demo = 0 WHERE id = ?", (now, runner["id"]))
         conn.execute(
@@ -742,8 +783,14 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (str(payload["msg"])[:200], runner["id"]))
         if isinstance(payload.get("equity"), (int, float)) and math.isfinite(float(payload["equity"])):
             equity = float(payload["equity"])
-            conn.execute("UPDATE runners SET equity = ? WHERE id = ?", (equity, runner["id"]))
-            conn.execute("INSERT INTO equity_points(runner_id, ts, equity) VALUES(?,?,?)", (runner["id"], now, equity))
+            day_start = event_ts[:10] + "T00:00:00Z"
+            prior = conn.execute(
+                "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
+                (runner["id"], day_start),
+            ).fetchone()
+            today_pnl = (equity - float(prior["equity"])) if prior else 0.0
+            conn.execute("UPDATE runners SET equity = ?, today_pnl = ? WHERE id = ?", (equity, today_pnl, runner["id"]))
+            conn.execute("INSERT INTO equity_points(runner_id, ts, equity) VALUES(?,?,?)", (runner["id"], event_ts, equity))
 
         if isinstance(payload.get("loop"), (int, float)):
             loop = int(payload["loop"])
@@ -805,11 +852,10 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         account_id = str(payload.get("account") or "").strip()
         if not account_id:
             account_id = account_ids[0] if account_ids else ""
-        ts = parse_iso(str(payload["ts"])) if payload.get("ts") else iso_now()
         conn.execute(
             """INSERT INTO signals(id,ts,runner_id,direction,side,action,instrument,instrument_name,market,venue,
                account_id,price,qty,amount,status,msg) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (signal_id, ts, runner["id"], direction, side, action, code, name, market, venue, account_id,
+            (signal_id, event_ts, runner["id"], direction, side, action, code, name, market, venue, account_id,
              price, qty, amount, "pending", str(payload.get("msg") or "")[:200]),
         )
         return {"ok": True, "heartbeat": True, "signal_id": signal_id, "server_time": iso_now()}

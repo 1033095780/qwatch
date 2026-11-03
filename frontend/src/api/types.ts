@@ -119,6 +119,17 @@ export interface OverviewCurvePoint {
   nav?: number;
 }
 
+/** 组合/策略风险指标：后端两位小数字符串，收益率相关字段单位为 % */
+export interface OverviewMetrics {
+  total_return_pct: string;
+  max_drawdown_pct: string;
+  sharpe: string;
+  annualized_return_pct: string;
+  calmar: string;
+  volatility: string;
+  profit_factor: string;
+}
+
 export interface Overview {
   as_of: string;
   total_equity: string;
@@ -129,6 +140,8 @@ export interface Overview {
   active_alerts: number;
   range: RangeKey;
   equity_curve: OverviewCurvePoint[];
+  drawdown_curve: DrawdownPoint[];
+  metrics: OverviewMetrics;
   benchmark: OverviewCurvePoint[];
   runners: Runner[];
   alerts: Alert[];
@@ -173,6 +186,7 @@ export interface RunnerDetail {
   range: RangeKey;
   metrics: {
     total_return_pct: string;
+    annualized_return_pct: string;
     today_pnl: string;
     max_drawdown_pct: string;
     sharpe: string;

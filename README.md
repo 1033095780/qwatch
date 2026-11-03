@@ -4,10 +4,10 @@
 
 ## 功能
 
-- **总览**：组合权益、今日盈亏、策略状态、最近信号与活跃告警
-- **策略**：新建策略即生成接入令牌；净值/回撤、信号、持仓、心跳、告警历史、令牌管理
-- **交易信号**：按策略 / 平台 / 市场 / 类型 / 标签 / 方向 / 状态筛选，排序、分页、导出 CSV
-- **告警**：P0/P1/P2 分级，确认与静默；心跳丢失、策略卡死、回撤超限等规则
+- **总览**：组合权益、今日盈亏、组合回撤曲线、年化收益 / 最大回撤 / 夏普 / 卡玛 / 波动率 / 盈亏比，以及策略状态与最新信号
+- **策略**：新建策略即生成接入令牌；净值/回撤、信号、心跳、告警历史、令牌管理；卡片展示夏普 / 最大回撤 / 日胜率 / 盈亏比
+- **交易信号**：按策略 / 平台 / 市场 / 方向 / 状态筛选，排序、分页、导出 CSV
+- **告警**：只保留「心跳丢失」「策略卡死」两类红色 P0 告警；确认与静默
 - **Python SDK**：零依赖，实例化即自动心跳；心跳与信号共用 `POST /api/v1/report`
 
 ## 界面
@@ -25,10 +25,10 @@
 ## 架构
 
 ~~~
-策略进程（任意语言 / Python SDK）
+策略进程（任意语言 / Python SDK / sim 模拟器）
    │  POST /api/v1/report   心跳 30s；信号也走同一个包
    ▼
-FastAPI + SQLite ──▶ Watchdog（30s 心跳 / 60s 判死 / loop 卡死）──▶ 告警 ──▶ 钉钉
+FastAPI + SQLite ──▶ Watchdog（60s 判死 / loop 卡死）──▶ 红色 P0 告警 ──▶ 钉钉
    │
    └──▶ Vue 3 面板（总览 / 策略 / 信号 / 告警 / 设置）
 ~~~
@@ -43,15 +43,18 @@ FastAPI + SQLite ──▶ Watchdog（30s 心跳 / 60s 判死 / loop 卡死）�
 
 环境：Python 3.10+、Node.js 20+。
 
-### 1. 启动后端
+### 1. 初始化基础数据
 
 ~~~bash
 pip install -r backend/requirements.txt
 
-# 可选：生成演示数据（策略 / 信号 / 告警 / 钉钉渠道）
+# 只写入账户 / 钉钉渠道 / 交易日历 / 配色（注意：会清空运行时数据）
 python -m backend.seed
+~~~
 
-# 启动 API + 前端静态文件
+### 2. 启动后端
+
+~~~bash
 python -m backend
 # http://127.0.0.1:8080
 ~~~
@@ -60,7 +63,21 @@ python -m backend
 - 数据库：`data/qwatch.db`（自动创建，已 gitignore）。
 - 修改前端代码后需要重新构建，后端会直接托管 `frontend/dist`。
 
-### 2. 前端开发（可选）
+### 3. 生成三策略模拟数据（可选）
+
+另开一个终端，运行内置模拟器：通过真实 API 创建 3 个策略和令牌，并持续发送心跳 / 信号 / 权益。
+
+~~~bash
+python -m sim.run
+# Ctrl+C 退出
+~~~
+
+- 策略：螺纹钢趋势（QMT）/ 股指日内（PTrade）/ 白银波段（掘金）
+- 首次运行会补齐 180 天历史权益，总览的夏普、回撤、年化等指标立即有数据。
+- 令牌保存在 `data/sim_tokens.json`（gitignore），重启后自动复用。
+- 环境变量：`QWATCH_URL`、`QWATCH_PASSWORD`。
+
+### 4. 前端开发（可选）
 
 ~~~bash
 cd frontend
@@ -94,17 +111,18 @@ q.close()
 
 - 什么都不填 = 心跳；信号 = 心跳 + 信号；
 - 30 秒自动心跳，60 秒无请求判死；
-- 信号字段严格校验：Symbol + direction + action + qty 必须完整；
+- 信号字段严格校验：symbol + direction + action + qty 必须完整；
 - 完整说明见 [sdk/python/README.md](sdk/python/README.md)。
 
 ## 目录
 
 ~~~
-backend/         FastAPI + SQLite 后端、演示数据
+backend/         FastAPI + SQLite 后端
 frontend/        Vue 3 + Naive UI + ECharts
 sdk/python/      Python 接入 SDK（零依赖）
+sim/             三策略模拟器（通过真实 API）
 screenshots/     界面截图
-data/            运行时 SQLite（gitignore）
+data/            运行时 SQLite / 模拟器令牌（gitignore）
 ~~~
 
 ## 使用说明与限制
@@ -112,7 +130,9 @@ data/            运行时 SQLite（gitignore）
 - 单用户、单机部署；公网访问建议放在 Cloudflare Tunnel / Nginx + HTTPS 后面。
 - 服务端只读：不接券商、不下单。
 - 告警渠道当前支持钉钉群机器人；配置后可在设置页发送测试消息。
-- 真实策略历史数据从接入后开始积累；演示数据只用于本地预览（演示钉钉 Webhook 为占位，请替换后再测试发送）。
+- 告警规则只保留心跳丢失与策略卡死；其他规则后续按需增加。
+- 日胜率、盈亏比等指标基于权益序列计算；接入成交明细后可换成真实交易口径。
+- 演示钉钉 Webhook 为占位，请替换后再测试发送。
 
 ## License
 

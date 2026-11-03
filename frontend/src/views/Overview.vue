@@ -1,13 +1,14 @@
 <script setup lang="ts">
-// Overview.vue — 总览：KPI 四卡、组合净值（区间/基准）、策略状态、策略卡片、最新信号、告警动态。
+// Overview.vue — 总览：KPI 四卡、组合净值/回撤、组合指标、策略状态、最新信号、告警动态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, useMessage } from 'naive-ui';
 import { Activity, ArrowRight, Bell, ChevronRight, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Overview, RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtDateTime, fmtMoney, fromNow } from '@/utils/format';
+import { fmtDateTime, fmtMoney, fmtPct, fromNow, pnlClass } from '@/utils/format';
 import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
+import DrawdownChart from '@/components/DrawdownChart.vue';
 import EquityChart from '@/components/EquityChart.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import HeartbeatMini from '@/components/HeartbeatMini.vue';
@@ -40,14 +41,7 @@ const lastNav = computed(() => {
   return points.length ? Number(points[points.length - 1].nav ?? 0).toFixed(4) : null;
 });
 
-const activeAlertLevels = computed(() => {
-  const alerts = data.value?.alerts ?? [];
-  return {
-    p0: alerts.filter((a) => a.severity === 'P0').length,
-    p1: alerts.filter((a) => a.severity === 'P1').length,
-    p2: alerts.filter((a) => a.severity === 'P2').length,
-  };
-});
+const activeAlertCount = computed(() => data.value?.alerts?.length ?? 0);
 
 const periodReturn = computed(() => {
   const curve = chartPoints.value;
@@ -55,6 +49,33 @@ const periodReturn = computed(() => {
   const first = Number(curve[0].value);
   const last = Number(curve[curve.length - 1].value);
   return first > 0 ? ((last - first) / first) * 100 : null;
+});
+
+/** 最大回撤统一带负号展示：后端返回绝对值百分比 */
+function fmtDrawdownPct(value: string | number | null | undefined): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return (n > 0 ? '-' : '') + fmtPct(n, 2, false);
+}
+
+const currentMetrics = computed(() => (isPortfolio.value ? data.value?.metrics ?? null : runnerDetail.value?.metrics ?? null));
+const drawdownPoints = computed(() =>
+  isPortfolio.value ? data.value?.drawdown_curve ?? [] : runnerDetail.value?.drawdown ?? [],
+);
+const metricsSubtitle = computed(() =>
+  isPortfolio.value ? '全部策略合并 · 当前净值区间口径' : (activeRunner.value?.name || '策略') + ' · 策略口径',
+);
+const metricItems = computed(() => {
+  const metrics = currentMetrics.value;
+  if (!metrics) return [];
+  return [
+    { label: '年化收益', value: fmtPct(metrics.annualized_return_pct), tone: pnlClass(metrics.annualized_return_pct) },
+    { label: '最大回撤', value: fmtDrawdownPct(metrics.max_drawdown_pct), tone: 'is-flat' },
+    { label: '夏普', value: metrics.sharpe || '—', tone: 'is-flat' },
+    { label: '卡玛', value: metrics.calmar || '—', tone: 'is-flat' },
+    { label: '波动率', value: fmtPct(metrics.volatility, 2, false), tone: 'is-flat' },
+    { label: '盈亏比', value: metrics.profit_factor || '—', tone: 'is-flat' },
+  ];
 });
 
 async function loadRunner(): Promise<void> {
@@ -112,6 +133,7 @@ onMounted(() => load(true));
       <div class="grid grid-kpi">
         <div v-for="i in 4" :key="i" class="skel skel-card" style="min-height: 128px" />
       </div>
+
       <div class="grid grid-main">
         <div class="skel" style="height: 380px; border-radius: 12px" />
         <div class="skel" style="height: 380px; border-radius: 12px" />
@@ -160,11 +182,24 @@ onMounted(() => load(true));
         <MetricCard
           label="活跃告警"
           :value="data.active_alerts + ' 条'"
-          :sub="'P0 ' + activeAlertLevels.p0 + ' · P1 ' + activeAlertLevels.p1 + ' · P2 ' + activeAlertLevels.p2"
+          :sub="activeAlertCount > 0 ? '心跳丢失 / 策略卡死' : '全部正常'"
           :icon="Bell"
-          :accent="activeAlertLevels.p0 > 0 ? 'danger' : activeAlertLevels.p1 > 0 ? 'warning' : 'primary'"
+          :accent="activeAlertCount > 0 ? 'danger' : 'primary'"
         />
       </div>
+
+      <SectionCard title="组合指标" :subtitle="metricsSubtitle">
+        <div v-if="metricItems.length" class="metric-strip">
+          <div v-for="item in metricItems" :key="item.label" class="metric-cell">
+            <span class="metric-label">{{ item.label }}</span>
+            <span class="metric-value mono" :class="item.tone">{{ item.value }}</span>
+          </div>
+        </div>
+        <div v-else-if="scopeLoading" class="metric-strip">
+          <div v-for="i in 6" :key="i" class="skel" style="height: 58px; border-radius: 8px" />
+        </div>
+        <EmptyState v-else compact title="暂无风险指标" description="等待策略净值数据后生成" />
+      </SectionCard>
 
       <div class="grid grid-main">
         <SectionCard
@@ -196,16 +231,23 @@ onMounted(() => load(true));
               :height="300"
               :value-label="isPortfolio ? '组合权益' : '策略权益'"
             />
-          </div>
-          <div class="chart-foot">
-            <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
-            <span v-if="periodReturn !== null">
-              区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
-            </span>
-            <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span></span>
-            <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
-            <span class="spacer" />
-            <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>
+            <div class="chart-foot">
+              <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
+              <span v-if="periodReturn !== null">
+                区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
+              </span>
+              <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span></span>
+              <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
+              <span class="spacer" />
+              <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>
+            </div>
+            <div class="dd-head">
+              <span class="eyebrow">回撤</span>
+              <span class="muted">{{ isPortfolio ? '组合峰值回落' : '策略峰值回落' }}</span>
+              <span class="spacer" />
+              <span class="muted mono">{{ drawdownPoints.length }} 点</span>
+            </div>
+            <DrawdownChart :data="drawdownPoints" :height="132" />
           </div>
         </SectionCard>
 
@@ -234,6 +276,7 @@ onMounted(() => load(true));
           </div>
         </SectionCard>
       </div>
+
 
       <div class="grid grid-main">
         <SectionCard title="最新信号" subtitle="最近 8 条">
@@ -297,7 +340,7 @@ onMounted(() => load(true));
               </div>
             </button>
           </div>
-          <EmptyState v-else compact title="没有活跃告警" description="所有策略心跳与回撤均在阈值内" />
+          <EmptyState v-else compact title="没有活跃告警" description="所有策略心跳正常" />
           <router-link to="/alerts" class="alert-all">
             查看全部告警 <ArrowRight :size="13" />
           </router-link>
@@ -390,6 +433,49 @@ onMounted(() => load(true));
 }
 .legend-line.eq {
   background: var(--primary);
+}
+.dd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+}
+.dd-head .spacer {
+  flex: 1;
+}
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+.metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(21, 28, 44, 0.5);
+}
+.metric-label {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.metric-value {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.metric-value.is-up {
+  color: var(--up);
+}
+.metric-value.is-down {
+  color: var(--down);
 }
 .status-list {
   display: flex;
@@ -503,5 +589,15 @@ onMounted(() => load(true));
 }
 .alert-all:hover {
   color: var(--primary);
+}
+@media (max-width: 1279px) {
+  .metric-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 639px) {
+  .metric-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 </style>

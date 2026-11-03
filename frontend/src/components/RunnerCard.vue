@@ -63,7 +63,7 @@ const winRate = (value: string): string => {
     <div class="foot">
       <div class="metric"><span class="k">夏普</span><span class="v num">{{ ratio(runner.sharpe) }}</span></div>
       <div class="metric"><span class="k">最大回撤</span><span class="v num">{{ fmtPct(runner.max_drawdown_pct, 2, false) }}</span></div>
-      <div class="metric"><span class="k">胜率</span><span class="v num">{{ winRate(runner.win_rate_pct) }}</span></div>
+      <div class="metric"><span class="k">日胜率</span><span class="v num">{{ winRate(runner.win_rate_pct) }}</span></div>
       <div class="metric"><span class="k">盈亏比</span><span class="v num">{{ ratio(runner.profit_factor) }}</span></div>
     </div>
   </router-link>
