@@ -29,7 +29,8 @@ const statusOptions = [
   { label: '运行中', value: 'running' },
   { label: '降级', value: 'degraded' },
   { label: '离线', value: 'offline' },
-  { label: '非交易时段', value: 'off_hours' },
+  { label: '休市', value: 'off_hours' },
+  { label: '已暂停', value: 'paused' },
 ];
 /** 平台/市场选项取自当前 runners 实际值，避免展示库里并不存在的枚举 */
 const marketOptions = computed(() => {

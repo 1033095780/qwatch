@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // CapitalFlowModal.vue — 手工记录入金/出金、重置盈亏基准；策略 SDK 不需要感知资金操作。
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { NButton, NInput, NModal, useDialog, useMessage } from 'naive-ui';
 import { ArrowDownToLine, ArrowUpFromLine, RotateCcw, Trash2 } from 'lucide-vue-next';
 import { api } from '@/api/client';
@@ -11,6 +11,7 @@ const props = defineProps<{ show: boolean; runner: Runner | null }>();
 const emit = defineEmits<{ 'update:show': [value: boolean]; changed: [] }>();
 
 const message = useMessage();
+const jumpSuggestion = computed(() => Number(summary.value?.suggested_amount || 0));
 const dialog = useDialog();
 
 const summary = ref<CapitalSummary | null>(null);
@@ -27,6 +28,11 @@ async function load(): Promise<void> {
   loading.value = true;
   try {
     summary.value = await api.capital(props.runner.id);
+    const suggested = Number(summary.value.suggested_amount || 0);
+    if (suggested && !amountText.value) {
+      mode.value = suggested > 0 ? 'deposit' : 'withdraw';
+      amountText.value = Math.abs(suggested).toFixed(2);
+    }
   } catch (err) {
     message.error(err instanceof Error ? err.message : '资金数据加载失败');
   } finally {
@@ -130,8 +136,11 @@ function fmtSigned(value: string): string {
     :mask-closable="false"
     @update:show="emit('update:show', $event)"
   >
-    <p class="modal-note">初始资金自动取第一条权益快照。入金/出金由你在这里手工记录，策略脚本无需上报资金操作。</p>
+    <p class="modal-note">初始资金自动取第一条权益快照。入金/出金只需填金额，默认按最近一次净值更新生效，曲线会自动抹平这次跳变；策略脚本无需上报资金操作。</p>
 
+    <div v-if="summary && Number(summary.pending_flows)" class="pending-hint">
+      已记录资金变动 {{ fmtSigned(summary.pending_flows) }}，等待该策略下一次上报权益后自动生效，不会先扣成亏损。
+    </div>
     <div v-if="summary" class="summary-grid">
       <div class="sum-item"><span class="k">初始资金</span><span class="v mono">¥{{ summary.initial_equity }}</span></div>
       <div class="sum-item"><span class="k">净资金调整</span><span class="v mono">{{ fmtSigned(summary.net_flows) }}</span></div>
@@ -139,6 +148,9 @@ function fmtSigned(value: string): string {
       <div class="sum-item"><span class="k">今日盈亏</span><span class="v mono" :class="Number(summary.today_pnl) >= 0 ? 'pos' : 'neg'">{{ fmtSigned(summary.today_pnl) }}</span></div>
     </div>
 
+    <div v-if="jumpSuggestion" class="jump-hint">
+      检测到最近一次权益跳变 {{ fmtSigned(String(jumpSuggestion)) }}，已按{{ jumpSuggestion > 0 ? '入金' : '出金' }}填好金额，确认即可抹平跳变。
+    </div>
     <div class="flow-form">
       <div class="mode-switch">
         <button type="button" :class="{ active: mode === 'deposit' }" @click="mode = 'deposit'">
@@ -223,6 +235,26 @@ function fmtSigned(value: string): string {
 }
 .neg {
   color: var(--down);
+}
+.pending-hint {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(46, 204, 143, .28);
+  border-radius: 7px;
+  background: rgba(46, 204, 143, .07);
+  color: #2ecc8f;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.jump-hint {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 165, 36, .28);
+  border-radius: 7px;
+  background: rgba(245, 165, 36, .08);
+  color: #f5a524;
+  font-size: 11px;
+  line-height: 1.6;
 }
 .flow-form {
   padding: 12px;

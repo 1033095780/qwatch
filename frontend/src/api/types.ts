@@ -2,7 +2,7 @@
 export type Market = 'CN_A' | 'CN_FUT' | 'HK' | 'US' | 'CRYPTO' | 'FX';
 export type Platform = 'ptrade' | 'qmt' | 'myquant' | 'tqsdk' | 'custom';
 export type StrategyType = 'trend' | 'arbitrage' | 'intraday' | 'grid' | 'multifactor' | 'market_making' | 'other';
-export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'off_hours';
+export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'off_hours' | 'paused';
 export type Severity = 'P0' | 'P1' | 'P2';
 export type AlertStatus = 'firing' | 'acknowledged' | 'resolved';
 export type SignalSide = 'buy' | 'sell';
@@ -302,8 +302,10 @@ export interface CapitalFlow {
 export interface CapitalSummary {
   initial_equity: string;
   net_flows: string;
+  pending_flows: string;
   total_pnl: string;
   today_pnl: string;
+  suggested_amount: string;
   flows: CapitalFlow[];
 }
 

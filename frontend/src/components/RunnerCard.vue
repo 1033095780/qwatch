@@ -7,6 +7,7 @@ import MarketTag from './MarketTag.vue';
 import PnlText from './PnlText.vue';
 import Sparkline from './Sparkline.vue';
 import StatusDot from './StatusDot.vue';
+import StatusTag from './StatusTag.vue';
 
 const props = defineProps<{ runner: Runner }>();
 
@@ -15,6 +16,8 @@ const accent = computed(() => {
     case 'running': return '#2ecc8f';
     case 'degraded': return '#f5a524';
     case 'offline': return '#f04438';
+    case 'off_hours': return '#f5a524';
+    case 'paused': return '#8b97ab';
     default: return '#2f3a4f';
   }
 });
@@ -42,6 +45,7 @@ const signedMoney = (value: string): string => {
       <div class="name-wrap">
         <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
         <span class="name truncate" :title="runner.name">{{ runner.name }}</span>
+        <StatusTag :status="runner.status" compact />
       </div>
       <MarketTag :market="runner.market" />
     </div>

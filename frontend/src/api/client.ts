@@ -128,6 +128,12 @@ export const api = {
   revokeToken(id: string) {
     return request<{ record: StrategyToken }>('/tokens/' + encodeURIComponent(id) + '/revoke', { method: 'POST' });
   },
+  pauseRunner(runnerId: string) {
+    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(runnerId) + '/pause', { method: 'POST' });
+  },
+  resumeRunner(runnerId: string) {
+    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(runnerId) + '/resume', { method: 'POST' });
+  },
   capital(runnerId: string) {
     return request<CapitalSummary>('/runners/' + encodeURIComponent(runnerId) + '/capital');
   },

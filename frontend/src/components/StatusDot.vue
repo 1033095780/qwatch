@@ -12,7 +12,8 @@ const color = computed(() => {
     case 'running': return '#2ecc8f';
     case 'degraded': return '#f5a524';
     case 'offline': return '#f04438';
-    case 'off_hours': return '#5f6d84';
+    case 'off_hours': return '#f5a524';
+    case 'paused': return '#8b97ab';
     case 'ok': return '#2ecc8f';
     case 'warn': return '#f5a524';
     default: return '#f04438';

@@ -260,14 +260,14 @@ onMounted(() => load(true));
             <EquityChart
               :data="chartPoints"
               :height="300"
-              :value-label="isPortfolio ? '组合权益' : '策略权益'"
+              :value-label="isPortfolio ? '组合权益（资金调整）' : '策略权益（资金调整）'"
             />
             <div class="chart-foot">
               <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
               <span v-if="periodReturn !== null">
                 区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
               </span>
-              <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span></span>
+              <span v-if="isPortfolio" class="muted">最新权益 <span class="num">¥{{ fmtMoney(data.total_equity) }}</span> · 曲线已剔除资金变动</span>
               <span v-else-if="lastNav" class="muted">最新净值 <span class="num mono">{{ lastNav }}</span></span>
               <span class="spacer" />
               <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>

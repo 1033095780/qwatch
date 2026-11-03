@@ -10,7 +10,8 @@ const META: Record<RunnerStatus, { label: string; color: string; bg: string; bor
   running: { label: '运行中', color: '#2ecc8f', bg: 'rgba(46,204,143,.1)', border: 'rgba(46,204,143,.26)' },
   degraded: { label: '降级', color: '#f5a524', bg: 'rgba(245,165,36,.1)', border: 'rgba(245,165,36,.26)' },
   offline: { label: '离线', color: '#f04438', bg: 'rgba(240,68,56,.1)', border: 'rgba(240,68,56,.26)' },
-  off_hours: { label: '非交易时段', color: '#8b97ab', bg: 'rgba(95,109,132,.12)', border: 'rgba(95,109,132,.3)' },
+  off_hours: { label: '休市', color: '#f5a524', bg: 'rgba(245,165,36,.1)', border: 'rgba(245,165,36,.26)' },
+  paused: { label: '已暂停', color: '#8b97ab', bg: 'rgba(95,109,132,.12)', border: 'rgba(95,109,132,.3)' },
 };
 const meta = computed(() => META[props.status]);
 </script>

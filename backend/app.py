@@ -42,6 +42,7 @@ PASSWORD = os.environ.get("QWATCH_PASSWORD", "qwatch")
 SESSION_HOURS = 12
 HEARTBEAT_TIMEOUT_S = 60
 CST = timezone(timedelta(hours=8))
+DINGTALK_KEYWORD = os.environ.get("QWATCH_DINGTALK_KEYWORD", "[+]")
 
 PLATFORM_LABELS = {"ptrade": "PTrade", "qmt": "QMT", "myquant": "掘金", "tqsdk": "天勤", "custom": "自研"}
 STRATEGY_TYPE_LABELS = {
@@ -125,6 +126,48 @@ def require_number(value: Any, field: str, *, minimum: float | None = None) -> f
     return number
 
 
+def runner_calendar_id(runner: sqlite3.Row) -> str:
+    market = str(runner["market"] or "")
+    venue = str(runner["venue"] or "")
+    if market == "CN_A":
+        return "cn_a"
+    if venue == "CFFEX":
+        return "cffex"
+    if market == "CN_FUT":
+        return "cn_fut_0230"
+    return "cn_fut_0230"
+
+
+def market_is_open(conn: sqlite3.Connection, runner: sqlite3.Row, at: datetime | None = None) -> bool:
+    calendar = conn.execute("SELECT * FROM calendars WHERE id = ?", (runner_calendar_id(runner),)).fetchone()
+    if not calendar:
+        return True
+    local = (at or now_dt()).astimezone(CST)
+    if local.weekday() >= 5:
+        return False
+    minute = local.hour * 60 + local.minute
+    sessions = loads(calendar["sessions"], [])
+    for session in sessions:
+        try:
+            start, end = str(session).split("-", 1)
+            start_minute = int(start[:2]) * 60 + int(start[3:5])
+            end_minute = int(end[:2]) * 60 + int(end[3:5])
+        except (ValueError, IndexError):
+            continue
+        if start_minute <= end_minute:
+            if start_minute <= minute < end_minute:
+                return True
+        elif minute >= start_minute or minute < end_minute:
+            return True
+    return False
+
+
+def effective_runner_status(conn: sqlite3.Connection, runner: sqlite3.Row, at: datetime | None = None) -> str:
+    if runner["status"] == "paused":
+        return "paused"
+    return "running" if market_is_open(conn, runner, at) else "off_hours"
+
+
 def touch_report_heartbeat(authorization: str | None) -> None:
     """report 校验失败/回滚后，仍单独提交一次心跳。"""
     if not authorization or not authorization.startswith("Bearer "):
@@ -140,7 +183,10 @@ def touch_report_heartbeat(authorization: str | None) -> None:
                 return
             now = iso_now()
             conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?", (now, token["id"]))
-            conn.execute("UPDATE runners SET last_seen = ?, status = 'running', demo = 0 WHERE id = ?", (now, runner["id"]))
+            conn.execute(
+                "UPDATE runners SET last_seen = ?, status = ?, demo = 0 WHERE id = ?",
+                (now, effective_runner_status(conn, runner, now_dt()), runner["id"]),
+            )
             conn.execute(
                 "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
                 (now, now, runner["id"]),
@@ -188,13 +234,24 @@ def accounts_of(conn: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, An
 
 
 def net_cash_flow(conn: sqlite3.Connection, runner_id: str) -> float:
-    """首次权益快照之后的净入金（入金正、出金负）。"""
-    first = conn.execute("SELECT MIN(ts) AS ts FROM equity_points WHERE runner_id = ?", (runner_id,)).fetchone()["ts"]
-    if not first:
+    """只计算已经反映在最新权益快照里的净入金；尚未等到新权益的流水视为待生效。"""
+    latest = conn.execute("SELECT MAX(ts) AS ts FROM equity_points WHERE runner_id = ?", (runner_id,)).fetchone()["ts"]
+    if not latest:
         return 0.0
     row = conn.execute(
-        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts >= ?",
-        (runner_id, first),
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts <= ?",
+        (runner_id, latest),
+    ).fetchone()
+    return float(row["amount"] or 0)
+
+
+def pending_cash_flow(conn: sqlite3.Connection, runner_id: str) -> float:
+    latest = conn.execute("SELECT MAX(ts) AS ts FROM equity_points WHERE runner_id = ?", (runner_id,)).fetchone()["ts"]
+    if not latest:
+        return 0.0
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts > ?",
+        (runner_id, latest),
     ).fetchone()
     return float(row["amount"] or 0)
 
@@ -212,13 +269,16 @@ def capital_summary(conn: sqlite3.Connection, runner_id: str) -> dict[str, Any] 
     flows = conn.execute(
         "SELECT id, ts, amount, note, kind FROM cash_flows WHERE runner_id = ? ORDER BY ts, id", (runner_id,)
     ).fetchall()
-    net = sum(float(item["amount"]) for item in flows)
+    net = net_cash_flow(conn, runner_id)
+    pending = pending_cash_flow(conn, runner_id)
     total_pnl = float(row["equity"]) - initial - net if initial > 0 else 0.0
     return {
         "initial_equity": f"{initial:.2f}",
         "net_flows": f"{net:.2f}",
+        "pending_flows": f"{pending:.2f}",
         "total_pnl": f"{total_pnl:.2f}",
         "today_pnl": f"{float(row['today_pnl']):.2f}",
+        "suggested_amount": f"{(recent_equity_jump(conn, runner_id) or {}).get('amount', 0.0):.2f}",
         "flows": [
             {
                 "id": item["id"], "ts": item["ts"], "amount": f"{float(item['amount']):.2f}",
@@ -227,6 +287,37 @@ def capital_summary(conn: sqlite3.Connection, runner_id: str) -> dict[str, Any] 
             for item in flows
         ],
     }
+
+
+def recent_equity_jump(conn: sqlite3.Connection, runner_id: str) -> dict[str, Any] | None:
+    """找出最近一次明显权益跳变；若该跳变已记过资金流水，则不再提示。"""
+    rows = conn.execute(
+        "SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 120", (runner_id,)
+    ).fetchall()
+    rows = list(reversed(rows))
+    previous: float | None = None
+    jump: dict[str, Any] | None = None
+    for row in rows:
+        value = float(row["equity"])
+        if previous is not None:
+            delta = value - previous
+            if abs(delta) > max(1000.0, abs(previous) * 0.03):
+                jump = {"ts": row["ts"], "amount": delta}
+        previous = value
+    if not jump:
+        return None
+    recorded = conn.execute(
+        "SELECT 1 FROM cash_flows WHERE runner_id = ? AND ts >= ? LIMIT 1",
+        (runner_id, jump["ts"]),
+    ).fetchone()
+    return None if recorded else jump
+
+
+def suggested_equity_ts(conn: sqlite3.Connection, runner_id: str) -> str:
+    jump = recent_equity_jump(conn, runner_id)
+    if jump:
+        return str(jump["ts"])
+    return iso_now()
 
 
 def refresh_runner_today_pnl(conn: sqlite3.Connection, runner_id: str) -> None:
@@ -241,9 +332,10 @@ def refresh_runner_today_pnl(conn: sqlite3.Connection, runner_id: str) -> None:
         "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
         (runner_id, day_start),
     ).fetchone()
+    latest_ts = conn.execute("SELECT MAX(ts) AS ts FROM equity_points WHERE runner_id = ?", (runner_id,)).fetchone()["ts"]
     day_flow = conn.execute(
-        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ?",
-        (runner_id, day_start),
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ? AND ts <= ?",
+        (runner_id, day_start, latest_ts or day_start),
     ).fetchone()["amount"]
     initial = float(row["initial_equity"] or 0)
     if initial <= 0:
@@ -255,9 +347,26 @@ def refresh_runner_today_pnl(conn: sqlite3.Connection, runner_id: str) -> None:
     conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner_id))
 
 
+def adjusted_equity_rows(conn: sqlite3.Connection, runner_id: str, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    """把历史权益中的外部资金变动剔除，得到可比较的权益曲线（避免入金造成跳变）。"""
+    flows = conn.execute(
+        "SELECT ts, amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' ORDER BY ts, id", (runner_id,)
+    ).fetchall()
+    result: list[dict[str, Any]] = []
+    flow_index = 0
+    cumulative = 0.0
+    for row in rows:
+        while flow_index < len(flows) and flows[flow_index]["ts"] <= row["ts"]:
+            cumulative += float(flows[flow_index]["amount"])
+            flow_index += 1
+        result.append({"ts": row["ts"], "equity": float(row["equity"]) - cumulative})
+    return result
+
+
 def sparkline_of(conn: sqlite3.Connection, runner_id: str) -> list[float]:
-    rows = conn.execute("SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 24", (runner_id,)).fetchall()
-    values = [round(float(row["equity"]), 2) for row in reversed(rows)]
+    rows = conn.execute("SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts", (runner_id,)).fetchall()
+    adjusted = adjusted_equity_rows(conn, runner_id, rows)[-24:]
+    values = [round(float(item["equity"]), 2) for item in adjusted]
     return values or [0.0]
 
 
@@ -308,8 +417,9 @@ def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, floa
         "SELECT ts, equity FROM (SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 5000) ORDER BY ts",
         (runner_id,),
     ).fetchall()
+    adjusted = adjusted_equity_rows(conn, runner_id, rows)
     by_day: dict[str, float] = {}
-    for row in rows:
+    for row in adjusted:
         by_day[row["ts"][:10]] = float(row["equity"])
     return series_analytics(list(by_day.values())[-180:])
 
@@ -367,7 +477,7 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "profit_factor": f"{stats['profit_factor']:.2f}",
         "win_rate_pct": f"{stats['win_rate']:.1f}",
         "heartbeat_bars": heartbeat_bars(row["status"]),
-        "uptime_24h": "99.90" if row["status"] == "running" else "0.00",
+        "uptime_24h": "99.90" if row["status"] in ("running", "off_hours") else "0.00",
         "last_heartbeat": row["last_seen"] or row["created_at"],
         "sparkline": sparkline_of(conn, row["id"]),
         "position_count": 0,
@@ -461,21 +571,22 @@ def settings_view(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def dingtalk_endpoint(webhook: str, secret: str) -> str:
+    if secret.startswith("SEC"):
+        timestamp = str(int(time.time() * 1000))
+        digest = hmac.new(secret.encode("utf-8"), (timestamp + "\n" + secret).encode("utf-8"), hashlib.sha256).digest()
+        sign = urllib.parse.quote_plus(base64.b64encode(digest))
+        return webhook + ("&" if "?" in webhook else "?") + "timestamp=" + timestamp + "&sign=" + sign
+    return webhook
+
+
 def _send_dingtalk(channels: list[dict[str, Any]], text: str) -> None:
     for channel in channels:
         url = channel["webhook"]
-        secret = channel["secret"]
         if not url or "demo-" in url:
             continue
-        if secret.startswith("SEC"):
-            timestamp = str(int(time.time() * 1000))
-            digest = hmac.new(secret.encode("utf-8"), (timestamp + "\n" + secret).encode("utf-8"), hashlib.sha256).digest()
-            sign = urllib.parse.quote_plus(base64.b64encode(digest))
-            url += ("&" if "?" in url else "?") + "timestamp=" + timestamp + "&sign=" + sign
-        payload: dict[str, Any] = {"msgtype": "text", "text": {"content": text}}
-        mobiles = channel.get("mobiles") or []
-        if mobiles:
-            payload["at"] = {"atMobiles": mobiles, "isAtAll": False}
+        url = dingtalk_endpoint(url, channel["secret"])
+        payload: dict[str, Any] = {"msgtype": "text", "text": {"content": DINGTALK_KEYWORD + " " + text}}
         request = urllib.request.Request(
             url,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -620,11 +731,10 @@ def list_runners(
     return {"items": items, "total": len(items)}
 
 
-def equity_points(conn: sqlite3.Connection, runner_id: str, days: int) -> list[sqlite3.Row]:
+def equity_points(conn: sqlite3.Connection, runner_id: str, days: int) -> list[dict[str, Any]]:
     rows = conn.execute("SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts", (runner_id,)).fetchall()
-    if len(rows) <= days:
-        return rows
-    return rows[-days:]
+    adjusted = adjusted_equity_rows(conn, runner_id, rows)
+    return adjusted if len(adjusted) <= days else adjusted[-days:]
 
 
 @app.get("/api/v1/runners/{runner_id}")
@@ -716,6 +826,39 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         }
 
 
+@app.post("/api/v1/runners/{runner_id}/pause")
+def pause_runner(runner_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Runner 不存在")
+        now = iso_now()
+        conn.execute("UPDATE runners SET status = 'paused' WHERE id = ?", (runner_id,))
+        conn.execute(
+            "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND status = 'firing'",
+            (now, now, runner_id),
+        )
+        updated = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        return {"runner": runner_view(conn, updated)}
+
+
+@app.post("/api/v1/runners/{runner_id}/resume")
+def resume_runner(runner_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Runner 不存在")
+        now = iso_now()
+        conn.execute("UPDATE runners SET last_seen = ?, status = 'running' WHERE id = ?", (now, runner_id))
+        fresh = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        conn.execute(
+            "UPDATE runners SET status = ? WHERE id = ?",
+            (effective_runner_status(conn, fresh, now_dt()), runner_id),
+        )
+        updated = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        return {"runner": runner_view(conn, updated)}
+
+
 @app.get("/api/v1/runners/{runner_id}/capital")
 def get_capital(runner_id: str, user: str = Depends(require_user)) -> dict[str, Any]:
     with connect() as conn:
@@ -732,14 +875,16 @@ def add_capital_flow(
     amount = require_number(payload.get("amount"), "amount")
     if abs(amount) < 0.01:
         raise HTTPException(status_code=400, detail="金额不能为 0")
-    ts = parse_iso(str(payload["ts"])) if payload.get("ts") else iso_now()
-    event_dt = dt_from(ts)
-    if event_dt and event_dt > now_dt() + timedelta(minutes=5):
-        raise HTTPException(status_code=400, detail="资金变动时间不能超过当前时间 5 分钟")
+    provided_ts = parse_iso(str(payload["ts"])) if payload.get("ts") else None
     note = str(payload.get("note") or "").strip()[:100]
     with connect() as conn:
         if not conn.execute("SELECT 1 FROM runners WHERE id = ?", (runner_id,)).fetchone():
             raise HTTPException(status_code=404, detail="策略不存在")
+        # 用户通常是看到权益跳变后才来记一笔；默认按最近一次权益快照生效，直接抹平跳变。
+        ts = provided_ts or suggested_equity_ts(conn, runner_id)
+        event_dt = dt_from(ts)
+        if event_dt and event_dt > now_dt() + timedelta(minutes=5):
+            raise HTTPException(status_code=400, detail="资金变动时间不能超过当前时间 5 分钟")
         conn.execute(
             "INSERT INTO cash_flows(runner_id, ts, amount, note, kind) VALUES(?,?,?,?,?)",
             (runner_id, ts, amount, note, "flow"),
@@ -756,9 +901,13 @@ def reset_capital_baseline(runner_id: str, user: str = Depends(require_user)) ->
             raise HTTPException(status_code=404, detail="策略不存在")
         current_pnl = float(summary["total_pnl"])
         if abs(current_pnl) >= 0.01:
+            latest = conn.execute(
+                "SELECT ts FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 1", (runner_id,)
+            ).fetchone()
+            effective_ts = latest["ts"] if latest else iso_now()
             conn.execute(
                 "INSERT INTO cash_flows(runner_id, ts, amount, note, kind) VALUES(?,?,?,?,?)",
-                (runner_id, iso_now(), current_pnl, "基准重置", "reset"),
+                (runner_id, effective_ts, current_pnl, "基准重置", "reset"),
             )
         return capital_summary(conn, runner_id) or {}
 
@@ -785,14 +934,25 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         total = sum(float(row["equity"]) for row in runner_rows)
         today = sum(float(row["today_pnl"]) for row in runner_rows)
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
-        # 组合曲线按日收盘聚合：盘中高频点不会把夏普/年化指标放大。
+        # 组合曲线按日收盘聚合，并剔除手工资金变动造成的跳变。
         point_rows = conn.execute(
-            "SELECT runner_id, ts, equity FROM (SELECT runner_id, ts, equity FROM equity_points ORDER BY ts DESC LIMIT 5000) ORDER BY ts"
+            "SELECT runner_id, ts, equity FROM equity_points ORDER BY ts"
         ).fetchall()
+        flow_rows = conn.execute("SELECT runner_id, ts, amount FROM cash_flows WHERE kind = 'flow' ORDER BY ts, id").fetchall()
+        flows_by_runner: dict[str, list[sqlite3.Row]] = defaultdict(list)
+        for flow in flow_rows:
+            flows_by_runner[flow["runner_id"]].append(flow)
+        flow_index: dict[str, int] = defaultdict(int)
+        cumulative: dict[str, float] = defaultdict(float)
         latest: dict[str, float] = {}
         by_day: dict[str, float] = {}
         for point in point_rows:
-            latest[point["runner_id"]] = float(point["equity"])
+            runner_id = point["runner_id"]
+            flows = flows_by_runner.get(runner_id, [])
+            while flow_index[runner_id] < len(flows) and flows[flow_index[runner_id]]["ts"] <= point["ts"]:
+                cumulative[runner_id] += float(flows[flow_index[runner_id]]["amount"])
+                flow_index[runner_id] += 1
+            latest[runner_id] = float(point["equity"]) - cumulative[runner_id]
             by_day[point["ts"][:10]] = sum(latest.values())
         curve = [
             {"ts": day + "T07:00:00Z", "nav": 0, "value": value}
@@ -819,7 +979,7 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         return {
             "as_of": iso_now(), "total_equity": f"{total:.2f}", "today_pnl": f"{today:.2f}",
             "today_pnl_pct": f"{(today / max(1, total - today) * 100):.2f}",
-            "running": sum(1 for row in runner_rows if row["status"] == "running"),
+            "running": sum(1 for row in runner_rows if row["status"] in ("running", "off_hours")),
             "total": len(runner_rows), "active_alerts": active_alerts, "range": range_key,
             "equity_curve": curve, "drawdown_curve": drawdown,
             "metrics": {
@@ -1008,16 +1168,23 @@ def test_channel(channel_id: str, user: str = Depends(require_user)) -> dict[str
         if not row:
             raise HTTPException(status_code=404, detail="渠道不存在")
         webhook = row["webhook"]
+        secret = row["secret"]
         if not webhook:
             raise HTTPException(status_code=400, detail="未配置 Webhook")
-    body = json.dumps({"msgtype": "text", "text": {"content": "qwatch 测试消息：通知渠道联通正常"}}).encode("utf-8")
-    request = urllib.request.Request(webhook, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    body = json.dumps({"msgtype": "text", "text": {"content": DINGTALK_KEYWORD + " qwatch 测试消息：通知渠道联通正常"}}, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(dingtalk_endpoint(webhook, secret), data=body, headers={"Content-Type": "application/json"}, method="POST")
     ok = False
     message = ""
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
-            ok = response.status < 300
-            message = "测试消息已发送"
+        with urllib.request.urlopen(request, timeout=8) as response:
+            raw = response.read().decode("utf-8", errors="ignore")
+            result = loads(raw, {})
+            if isinstance(result, dict) and int(result.get("errcode", 0) or 0) != 0:
+                ok = False
+                message = "钉钉返回错误：" + str(result.get("errmsg") or raw[:160])
+            else:
+                ok = True
+                message = "测试消息已发送"
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         message = "发送失败：" + str(exc)
     with connect() as conn:
@@ -1042,7 +1209,10 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         if event_dt and event_dt > now_dt() + timedelta(minutes=5):
             raise HTTPException(status_code=400, detail="ts 不能超过服务器时间 5 分钟")
         conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?", (now, token["id"]))
-        conn.execute("UPDATE runners SET last_seen = ?, status = 'running', demo = 0 WHERE id = ?", (now, runner["id"]))
+        conn.execute(
+            "UPDATE runners SET last_seen = ?, status = ?, demo = 0 WHERE id = ?",
+            (now, effective_runner_status(conn, runner, now_dt()), runner["id"]),
+        )
         conn.execute(
             "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
             (now, now, runner["id"]),
@@ -1175,13 +1345,18 @@ async def watchdog_loop() -> None:
     while True:
         try:
             with connect() as conn:
-                runners = conn.execute("SELECT * FROM runners WHERE last_seen IS NOT NULL AND status != 'offline' AND demo = 0").fetchall()
+                runners = conn.execute(
+                    "SELECT * FROM runners WHERE last_seen IS NOT NULL AND status NOT IN ('offline', 'paused') AND demo = 0"
+                ).fetchall()
                 now = now_dt()
                 for runner in runners:
                     last_seen = dt_from(runner["last_seen"])
                     if not last_seen:
                         continue
                     if (now - last_seen).total_seconds() <= HEARTBEAT_TIMEOUT_S:
+                        continue
+                    if not market_is_open(conn, runner, now):
+                        conn.execute("UPDATE runners SET status = 'off_hours' WHERE id = ?", (runner["id"],))
                         continue
                     conn.execute("UPDATE runners SET status = 'offline' WHERE id = ?", (runner["id"],))
                     existing = conn.execute(

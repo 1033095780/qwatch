@@ -112,7 +112,7 @@ onMounted(() => {
           <div class="panel-head">
             <div>
               <h2 class="panel-title">钉钉通知渠道</h2>
-              <p class="panel-sub">access_token 在 Webhook URL 中；开启加签时填 SEC 开头的密钥。密钥与 token 均脱敏展示，保存后刷新掩码。</p>
+              <p class="panel-sub">access_token 在 Webhook URL 中；消息会自动加机器人关键字前缀 <code>[+]</code>，钉钉机器人安全设置里选“自定义关键字”并填 <code>[+]</code>。不使用 @手机号。</p>
             </div>
             <span class="chip">限流 15 条/分钟（本地令牌桶）</span>
           </div>
@@ -134,7 +134,7 @@ onMounted(() => {
               <div class="kv-list">
                 <div class="kv-row"><span class="k">Webhook</span><span class="v mono">{{ channel.webhook_masked }}</span></div>
                 <div class="kv-row"><span class="k">加签密钥</span><span class="v mono">{{ channel.secret_masked }}</span></div>
-                <div class="kv-row"><span class="k">@手机号</span><span class="v mono">{{ channel.at_mobiles.length ? channel.at_mobiles.join('、') : '未配置' }}</span></div>
+                <div class="kv-row"><span class="k">关键字前缀</span><span class="v mono">[+]</span></div>
                 <div class="kv-row"><span class="k">限流</span><span class="v mono">{{ channel.rate_limit_per_min }} 条/分钟</span></div>
                 <div class="kv-row">
                   <span class="k">最近测试</span>

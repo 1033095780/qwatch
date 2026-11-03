@@ -2,8 +2,8 @@
 // StrategyDetail.vue — 策略详情：状态头、6 KPI、Tabs（净值/信号/持仓/心跳/告警/配置）。
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { NButton } from 'naive-ui';
-import { ArrowUpRight, KeyRound, Wallet } from 'lucide-vue-next';
+import { NButton, useDialog, useMessage } from 'naive-ui';
+import { ArrowUpRight, KeyRound, Pause, Play, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -30,6 +30,8 @@ import type { TabItem } from '@/components/TabBar.vue';
 
 const route = useRoute();
 const settings = useSettingsStore();
+const dialog = useDialog();
+const message = useMessage();
 
 const runnerId = computed(() => String(route.params.id || ''));
 const detail = ref<RunnerDetail | null>(null);
@@ -40,6 +42,7 @@ const range = ref<RangeKey>('all');
 const activeTab = ref('equity');
 const tokenOpen = ref(false);
 const capitalOpen = ref(false);
+const actionLoading = ref(false);
 
 const signedMoney = (value: string): string => {
   const number = Number(value);
@@ -69,6 +72,31 @@ const periodReturn = computed(() => {
 });
 
 const runningOutage = computed(() => detail.value?.outages.find((o) => !o.end) ?? null);
+
+function togglePause(): void {
+  if (!detail.value) return;
+  const paused = detail.value.runner.status === 'paused';
+  dialog.warning({
+    title: paused ? '恢复监控' : '暂停监控',
+    content: paused ? '恢复后按最新心跳与交易日历重新判断状态。' : '暂停后不再产生心跳/卡死告警，状态显示为灰色「已暂停」。',
+    positiveText: paused ? '恢复' : '暂停',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      actionLoading.value = true;
+      try {
+        if (paused) await api.resumeRunner(runnerId.value);
+        else await api.pauseRunner(runnerId.value);
+        message.success(paused ? '已恢复监控' : '已暂停监控');
+        await load();
+        settings.triggerRefresh();
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : '操作失败');
+      } finally {
+        actionLoading.value = false;
+      }
+    },
+  });
+}
 
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
@@ -119,6 +147,10 @@ onMounted(() => load(true));
         <template #extra>
           <StatusTag :status="detail.runner.status" />
           <MarketTag :market="detail.runner.market" />
+          <n-button size="small" :loading="actionLoading" @click="togglePause">
+            <template #icon><component :is="detail.runner.status === 'paused' ? Play : Pause" :size="13" /></template>
+            {{ detail.runner.status === 'paused' ? '恢复监控' : '暂停监控' }}
+          </n-button>
           <n-button size="small" @click="tokenOpen = true">
             <template #icon><KeyRound :size="13" /></template>
             接入令牌
@@ -170,7 +202,7 @@ onMounted(() => load(true));
             <RangeTabs v-model="range" />
           </div>
           <div :class="{ dimmed: refreshing }">
-            <EquityChart :data="detail.equity" :height="300" value-label="策略净值" />
+            <EquityChart :data="detail.equity" :height="300" value-label="策略净值（资金调整）" />
             <div class="dd-head">
               <span class="eyebrow">回撤</span>
               <span v-if="periodReturn !== null" class="muted">

@@ -17,7 +17,6 @@ const saving = ref(false);
 const form = ref({
   webhook: '',
   secret: '',
-  atMobiles: '',
   enabled: true,
 });
 
@@ -39,7 +38,6 @@ watch(() => props.show, (visible) => {
   if (!visible) return;
   form.value.webhook = '';
   form.value.secret = '';
-  form.value.atMobiles = props.channel ? props.channel.at_mobiles.join(', ') : '';
   form.value.enabled = props.channel?.enabled ?? true;
   formRef.value?.restoreValidation();
 });
@@ -61,9 +59,8 @@ async function submit(): Promise<void> {
       id: props.channel.id,
       enabled: form.value.enabled,
       webhook: form.value.webhook.trim(),
-      at_mobiles: form.value.atMobiles.split(/[,，]/).map((m) => m.trim()).filter(Boolean),
     };
-    if (form.value.secret.trim()) patch.secret = form.value.secret.trim();
+    patch.secret = form.value.secret.trim();
     await store.saveChannel(patch);
     message.success('渠道配置已保存，密钥已刷新掩码');
     emit('saved');
@@ -86,7 +83,7 @@ async function submit(): Promise<void> {
     @update:show="emit('update:show', $event)"
   >
     <p class="modal-note">
-      access_token 在 Webhook URL 中；开启加签时填 SEC 开头的密钥。保存后完整值不再回显，页面按掩码展示。
+      access_token 在 Webhook URL 中；消息会自动加关键字前缀 <code>[+]</code>（钉钉机器人安全设置里选“自定义关键字”并填 <code>[+]</code>）。没有加签就留空密钥；保存后完整值不再回显。
     </p>
     <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" require-mark-placement="right-hanging">
       <n-form-item label="Webhook 地址" path="webhook">
@@ -96,10 +93,7 @@ async function submit(): Promise<void> {
         />
       </n-form-item>
       <n-form-item label="加签密钥">
-        <n-input v-model:value="form.secret" type="password" show-password-on="click" placeholder="可选，SEC 开头；留空保持原密钥" />
-      </n-form-item>
-      <n-form-item label="@手机号">
-        <n-input v-model:value="form.atMobiles" placeholder="逗号分隔，如 13800138000,13900139000（可空）" />
+        <n-input v-model:value="form.secret" type="password" show-password-on="click" placeholder="没有加签就留空；留空保存会清除旧密钥" />
       </n-form-item>
       <n-form-item label="启用渠道">
         <n-switch v-model:value="form.enabled" />
