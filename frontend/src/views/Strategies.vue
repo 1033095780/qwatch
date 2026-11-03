@@ -54,16 +54,6 @@ const hasFilter = computed(
   () => !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all' || accountFilter.value !== 'all',
 );
 
-const statusSummary = computed(() => {
-  const count = (status: RunnerStatus) => runners.value.filter((r) => r.status === status).length;
-  return [
-    { label: '运行中', value: count('running'), color: '#2ecc8f' },
-    { label: '降级', value: count('degraded'), color: '#f5a524' },
-    { label: '离线', value: count('offline'), color: '#f04438' },
-    { label: '非交易', value: count('off_hours'), color: '#5f6d84' },
-  ];
-});
-
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
@@ -94,13 +84,6 @@ onMounted(() => load(true));
   <div class="page">
     <PageHeader title="策略" :subtitle="'运行实例与状态 · 共 ' + runners.length + ' 个 · 告警与心跳按交易日历判定'">
       <template #extra>
-        <div class="summary">
-          <span v-for="item in statusSummary" :key="item.label" class="summary-item">
-            <i :style="{ background: item.color }" />
-            <span class="muted">{{ item.label }}</span>
-            <span class="mono">{{ item.value }}</span>
-          </span>
-        </div>
         <n-button size="small" :loading="loading" @click="load()">
           <template #icon><RefreshCw :size="14" /></template>
           刷新
@@ -150,24 +133,6 @@ onMounted(() => load(true));
 </template>
 
 <style scoped>
-.summary {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.summary-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
-}
-.summary-item i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  display: inline-block;
-}
 .toolbar {
   display: flex;
   align-items: center;

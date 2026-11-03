@@ -24,8 +24,8 @@
   --chart-6: #f25c5c;
   --grid-line: #1a2230;
 
-  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", monospace;
 
   --radius-card: 12px;
   --radius-btn: 8px;

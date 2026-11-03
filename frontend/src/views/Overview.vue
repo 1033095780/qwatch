@@ -40,16 +40,6 @@ const lastNav = computed(() => {
   return points.length ? Number(points[points.length - 1].nav ?? 0).toFixed(4) : null;
 });
 
-const statusCounts = computed(() => {
-  const runners = data.value?.runners ?? [];
-  return {
-    running: runners.filter((r) => r.status === 'running').length,
-    degraded: runners.filter((r) => r.status === 'degraded').length,
-    offline: runners.filter((r) => r.status === 'offline').length,
-    offHours: runners.filter((r) => r.status === 'off_hours').length,
-  };
-});
-
 const activeAlertLevels = computed(() => {
   const alerts = data.value?.alerts ?? [];
   return {
@@ -172,7 +162,6 @@ onMounted(() => load(true));
         <MetricCard
           label="策略运行"
           :value="data.running + ' / ' + data.total"
-          :sub="statusCounts.degraded + ' 降级 · ' + statusCounts.offline + ' 离线 · ' + statusCounts.offHours + ' 非交易'"
           :icon="Activity"
           accent="primary"
         />
