@@ -1,18 +1,21 @@
 <script setup lang="ts">
-// Trades.vue — 交易流水：多条件筛选 + 本地排序/分页（一次取全量 ≤200）+ CSV 导出。
+// Signals.vue — 交易信号：多条件筛选 + 本地排序/分页（一次取全量 ≤200）+ CSV 导出。
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, NDatePicker, NInput, NSelect, useMessage } from 'naive-ui';
 import { ArrowDown, ArrowUp, Download, FilterX, RefreshCw, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Account, Fill, Runner } from '@/api/types';
+import type { Account, Runner, Signal, SignalStatus } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
+import { MARKET_LABELS, PLATFORM_OPTIONS, SIGNAL_ACTION_LABELS, STRATEGY_TYPE_OPTIONS } from '@/utils/catalog';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
+import SideTag from '@/components/SideTag.vue';
+import SignalStatusTag from '@/components/SignalStatusTag.vue';
 
-type SortKey = 'ts' | 'qty' | 'price' | 'amount' | 'fee';
+type SortKey = 'ts' | 'qty' | 'price' | 'amount';
 
 const route = useRoute();
 const message = useMessage();
@@ -23,8 +26,9 @@ const DAY = 24 * HOUR;
 
 const runners = ref<Runner[]>([]);
 const accounts = ref<Account[]>([]);
-const items = ref<Fill[]>([]);
+const items = ref<Signal[]>([]);
 const total = ref(0);
+const sumAmount = ref('0');
 const loading = ref(true);
 const error = ref('');
 const page = ref(1);
@@ -36,32 +40,39 @@ const sortDir = ref<'asc' | 'desc'>('desc');
 const filters = reactive({
   runnerId: '',
   accountId: '',
+  platform: '',
   market: '',
-  instrument: '',
+  strategyType: '',
   side: '',
+  status: '',
+  tag: '',
+  instrument: '',
 });
 
-const runnerOptions = computed(() => [
-  { label: '全部策略', value: '' },
-  ...runners.value.map((r) => ({ label: r.name, value: r.id })),
-]);
-const accountOptions = computed(() => [
-  { label: '全部账户', value: '' },
-  ...accounts.value.map((a) => ({ label: a.name, value: a.id })),
-]);
-const marketOptions = [
-  { label: '全部市场', value: '' },
-  { label: 'A股', value: 'CN_A' },
-  { label: '期货', value: 'CN_FUT' },
+const withAll = (label: string, options: { value: string; label: string }[]) => [{ label, value: '' }, ...options];
+
+const runnerOptions = computed(() => withAll('全部策略', runners.value.map((r) => ({ label: r.name, value: r.id }))));
+const platformOptions = withAll('全部平台', PLATFORM_OPTIONS);
+const marketOptions = withAll('全部市场', (Object.keys(MARKET_LABELS) as (keyof typeof MARKET_LABELS)[])
+  .filter((key) => key !== 'HK')
+  .map((key) => ({ label: MARKET_LABELS[key], value: key })));
+const strategyTypeOptions = withAll('全部类型', STRATEGY_TYPE_OPTIONS);
+const sideOptions = withAll('全部方向', [{ label: '买入', value: 'buy' }, { label: '卖出', value: 'sell' }]);
+const statusOptions: { label: string; value: '' | SignalStatus }[] = [
+  { label: '全部状态', value: '' },
+  { label: '已执行', value: 'filled' },
+  { label: '待执行', value: 'pending' },
+  { label: '已忽略', value: 'ignored' },
 ];
-const sideOptions = [
-  { label: '全部方向', value: '' },
-  { label: '买入', value: 'buy' },
-  { label: '卖出', value: 'sell' },
-];
+const tagOptions = computed(() => {
+  const tags = new Set<string>();
+  runners.value.forEach((r) => r.tags.forEach((tag) => tags.add(tag)));
+  return withAll('全部标签', [...tags].sort().map((tag) => ({ label: tag, value: tag })));
+});
 
 const hasFilter = computed(
-  () => !!(filters.runnerId || filters.accountId || filters.market || filters.instrument || filters.side || dateRange.value),
+  () => !!(filters.runnerId || filters.accountId || filters.platform || filters.market || filters.strategyType
+    || filters.side || filters.status || filters.tag || filters.instrument || dateRange.value),
 );
 
 const sortedItems = computed(() => {
@@ -75,7 +86,7 @@ const pageCount = computed(() => Math.max(1, Math.ceil(sortedItems.value.length 
 const pageRows = computed(() =>
   sortedItems.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value),
 );
-const sumAmount = computed(() => sortedItems.value.reduce((sum, f) => sum + Number(f.amount), 0));
+const sumQty = computed(() => sortedItems.value.reduce((sum, s) => sum + Number(s.qty), 0));
 
 function shanghaiDayStart(ms: number): number {
   const d = new Date(ms + 8 * HOUR);
@@ -89,25 +100,30 @@ async function load(): Promise<void> {
     const query = {
       runner_id: filters.runnerId || undefined,
       account_id: filters.accountId || undefined,
+      platform: filters.platform || undefined,
       market: filters.market || undefined,
-      instrument: filters.instrument.trim() || undefined,
+      strategy_type: filters.strategyType || undefined,
       side: filters.side || undefined,
+      status: filters.status || undefined,
+      tag: filters.tag || undefined,
+      instrument: filters.instrument.trim() || undefined,
       from: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[0])).toISOString() : undefined,
       to: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[1]) + DAY - 1).toISOString() : undefined,
       limit: 200,
       cursor: 0,
     };
-    const [fillsRes, runnersRes, accountsRes] = await Promise.all([
-      api.fills(query),
+    const [signalsRes, runnersRes, accountsRes] = await Promise.all([
+      api.signals(query),
       runners.value.length ? Promise.resolve({ items: runners.value }) : api.runners(),
       accounts.value.length ? Promise.resolve({ items: accounts.value }) : api.accounts(),
     ]);
-    items.value = fillsRes.items;
-    total.value = fillsRes.total;
+    items.value = signalsRes.items;
+    total.value = signalsRes.total;
+    sumAmount.value = signalsRes.sum_amount;
     runners.value = runnersRes.items;
     accounts.value = accountsRes.items;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '成交加载失败';
+    error.value = err instanceof Error ? err.message : '信号加载失败';
   } finally {
     loading.value = false;
   }
@@ -140,9 +156,13 @@ function sortIcon(key: SortKey): string {
 function resetFilters(): void {
   filters.runnerId = '';
   filters.accountId = '';
+  filters.platform = '';
   filters.market = '';
-  filters.instrument = '';
+  filters.strategyType = '';
   filters.side = '';
+  filters.status = '';
+  filters.tag = '';
+  filters.instrument = '';
   dateRange.value = null;
   page.value = 1;
   load();
@@ -155,30 +175,32 @@ function csvCell(value: string | number): string {
 
 function exportCsv(): void {
   if (!sortedItems.value.length) {
-    message.warning('当前筛选条件下没有可导出的成交');
+    message.warning('当前筛选条件下没有可导出的信号');
     return;
   }
-  const header = ['时间(Asia/Shanghai)', '成交ID', '策略', '账户', '品种', '品种名称', '方向', '开平', '数量', '价格', '金额', '手续费', '币种', '状态'];
-  const rows = sortedItems.value.map((f) => [
-    fmtDateTime(f.ts), f.id, f.runner_name, f.account_name, f.instrument, f.instrument_name,
-    f.side === 'buy' ? '买入' : '卖出', f.position_effect === 'open' ? '开仓' : '平仓',
-    f.qty, f.price, f.amount, f.fee, f.currency, f.status === 'filled' ? '已成交' : '部分成交',
+  const header = ['时间(Asia/Shanghai)', '信号ID', '策略', '平台', '市场', '品种', '品种名称', '方向', '动作', '数量', '参考价', '金额', '状态', '账户', '标签'];
+  const rows = sortedItems.value.map((s) => [
+    fmtDateTime(s.ts), s.id, s.runner_name, s.platform_label, s.market_label, s.instrument, s.instrument_name,
+    s.side === 'buy' ? '买入' : '卖出', SIGNAL_ACTION_LABELS[s.action],
+    s.qty, s.price, s.amount,
+    s.status === 'filled' ? '已执行' : s.status === 'pending' ? '待执行' : '已忽略',
+    s.account_name, s.tags.join(' / '),
   ]);
   const csv = '\uFEFF' + [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = 'qwatch-fills-' + fmtDate(new Date().toISOString()).replace(/-/g, '') + '.csv';
+  link.download = 'qwatch-signals-' + fmtDate(new Date().toISOString()).replace(/-/g, '') + '.csv';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-  message.success('已导出 ' + rows.length + ' 笔成交（CSV）');
+  message.success('已导出 ' + rows.length + ' 条信号（CSV）');
 }
 
 watch(
-  () => [filters.runnerId, filters.accountId, filters.market, filters.side, filters.instrument, dateRange.value],
+  () => [filters.runnerId, filters.platform, filters.market, filters.strategyType, filters.side, filters.status, filters.tag, filters.instrument, dateRange.value],
   scheduleLoad,
   { deep: true },
 );
@@ -203,7 +225,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 
 <template>
   <div class="page">
-    <PageHeader title="交易流水" subtitle="跨策略 / 账户 / 市场的成交事实 · 时间统一 Asia/Shanghai（tooltip 显示 UTC）">
+    <PageHeader title="交易信号" subtitle="跨策略 / 平台 / 市场 / 类型 / 标签的信号流水 · Asia/Shanghai">
       <template #extra>
         <n-button size="small" @click="exportCsv">
           <template #icon><Download :size="14" /></template>
@@ -219,9 +241,12 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
     <section class="card filter-bar">
       <div class="filters">
         <n-select v-model:value="filters.runnerId" :options="runnerOptions" size="small" class="f-select" />
-        <n-select v-model:value="filters.accountId" :options="accountOptions" size="small" class="f-select" />
+        <n-select v-model:value="filters.platform" :options="platformOptions" size="small" class="f-select-sm" />
         <n-select v-model:value="filters.market" :options="marketOptions" size="small" class="f-select-sm" />
-        <n-select v-model:value="filters.side" :options="sideOptions" size="small" class="f-select-sm" />
+        <n-select v-model:value="filters.strategyType" :options="strategyTypeOptions" size="small" class="f-select-sm" />
+        <n-select v-model:value="filters.side" :options="sideOptions" size="small" class="f-select-xs" />
+        <n-select v-model:value="filters.status" :options="statusOptions" size="small" class="f-select-xs" />
+        <n-select v-model:value="filters.tag" :options="tagOptions" size="small" class="f-select-sm" />
         <n-input v-model:value="filters.instrument" clearable placeholder="品种代码，如 rb2601" size="small" class="f-input">
           <template #prefix><Search :size="13" /></template>
         </n-input>
@@ -231,8 +256,9 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
         </button>
       </div>
       <div class="summary">
-        <span class="muted">命中 <span class="num">{{ total }}</span> 笔</span>
-        <span class="muted">成交额 <span class="num">¥{{ fmtMoney(sumAmount) }}</span></span>
+        <span class="muted">命中 <span class="num">{{ total }}</span> 条</span>
+        <span class="muted">数量合计 <span class="num">{{ sumQty }}</span></span>
+        <span class="muted">金额合计 <span class="num">¥{{ fmtMoney(sumAmount) }}</span></span>
       </div>
     </section>
 
@@ -247,8 +273,8 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
       </div>
       <EmptyState
         v-else-if="!sortedItems.length && !loading"
-        title="没有匹配的成交"
-        :description="hasFilter ? '调整筛选条件或清空后重试' : '策略尚未上报成交事件'"
+        title="没有匹配的信号"
+        :description="hasFilter ? '调整筛选条件或清空后重试' : '策略上报交易信号后会出现在这里'"
       >
         <template #action>
           <n-button v-if="hasFilter" size="small" @click="resetFilters">清空筛选</n-button>
@@ -261,35 +287,35 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
             <tr>
               <th class="sortable" @click="toggleSort('ts')">时间 <span class="sort">{{ sortIcon('ts') }}</span></th>
               <th>策略</th>
-              <th>账户</th>
+              <th>平台</th>
+              <th>市场</th>
               <th>品种</th>
               <th>方向</th>
-              <th>开平</th>
+              <th>动作</th>
+              <th class="th-num sortable" @click="toggleSort('price')">参考价 <span class="sort">{{ sortIcon('price') }}</span></th>
               <th class="th-num sortable" @click="toggleSort('qty')">数量 <span class="sort">{{ sortIcon('qty') }}</span></th>
-              <th class="th-num sortable" @click="toggleSort('price')">价格 <span class="sort">{{ sortIcon('price') }}</span></th>
               <th class="th-num sortable" @click="toggleSort('amount')">金额 <span class="sort">{{ sortIcon('amount') }}</span></th>
-              <th class="th-num sortable" @click="toggleSort('fee')">手续费 <span class="sort">{{ sortIcon('fee') }}</span></th>
               <th>状态</th>
+              <th>账户</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="fill in pageRows" :key="fill.id">
-              <td class="mono nowrap" :title="fill.ts">{{ fmtDateTime(fill.ts) }}</td>
-              <td class="truncate cell-strong">{{ fill.runner_name }}</td>
-              <td class="truncate muted">{{ fill.account_name }}</td>
+            <tr v-for="signal in pageRows" :key="signal.id" :class="{ 'row-ignored': signal.status === 'ignored' }">
+              <td class="mono nowrap" :title="signal.ts">{{ fmtDateTime(signal.ts) }}</td>
+              <td class="truncate cell-strong">{{ signal.runner_name }}</td>
+              <td class="muted nowrap">{{ signal.platform_label || '—' }}</td>
+              <td class="muted nowrap">{{ signal.market_label }}</td>
               <td>
-                <span class="mono">{{ fill.instrument }}</span>
-                <span class="inst">{{ fill.instrument_name }}</span>
+                <span class="mono">{{ signal.instrument }}</span>
+                <span class="inst">{{ signal.instrument_name }}</span>
               </td>
-              <td><span class="side" :class="fill.side">{{ fill.side === 'buy' ? '买入' : '卖出' }}</span></td>
-              <td class="muted">{{ fill.position_effect === 'open' ? '开仓' : '平仓' }}</td>
-              <td class="td-num">{{ fill.qty }}</td>
-              <td class="td-num">{{ fill.price }}</td>
-              <td class="td-num">{{ fmtMoney(fill.amount) }}</td>
-              <td class="td-num faint">{{ fmtMoney(fill.fee) }}</td>
-              <td>
-                <span class="fill-status" :class="fill.status">{{ fill.status === 'filled' ? '已成交' : '部分成交' }}</span>
-              </td>
+              <td><SideTag :side="signal.side" /></td>
+              <td class="muted nowrap">{{ SIGNAL_ACTION_LABELS[signal.action] }}</td>
+              <td class="td-num">{{ signal.price }}</td>
+              <td class="td-num">{{ signal.qty }}</td>
+              <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
+              <td><SignalStatusTag :status="signal.status" /></td>
+              <td class="truncate muted">{{ signal.account_name }}</td>
             </tr>
           </tbody>
         </table>
@@ -334,16 +360,19 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
   min-width: 0;
 }
 .f-select {
-  width: 150px;
+  width: 140px;
 }
 .f-select-sm {
-  width: 112px;
+  width: 108px;
+}
+.f-select-xs {
+  width: 96px;
 }
 .f-input {
-  width: 180px;
+  width: 170px;
 }
 .f-date {
-  width: 240px;
+  width: 230px;
 }
 .reset {
   display: inline-flex;
@@ -381,31 +410,8 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
   color: var(--text-3);
   line-height: 1.2;
 }
-.side {
-  display: inline-flex;
-  height: 19px;
-  align-items: center;
-  padding: 0 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-.side.buy {
-  color: var(--up);
-  background: color-mix(in srgb, var(--up) 12%, transparent);
-}
-.side.sell {
-  color: var(--down);
-  background: color-mix(in srgb, var(--down) 12%, transparent);
-}
-.fill-status {
-  font-size: 11px;
-}
-.fill-status.filled {
-  color: #2ecc8f;
-}
-.fill-status.partial {
-  color: #f5a524;
+.row-ignored td {
+  opacity: 0.62;
 }
 .pager {
   display: flex;
@@ -454,7 +460,8 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
     gap: 8px;
   }
   .f-select,
-  .f-select-sm {
+  .f-select-sm,
+  .f-select-xs {
     width: 100%;
     min-width: 0;
   }
@@ -470,6 +477,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
   .summary {
     justify-content: space-between;
     width: 100%;
+    flex-wrap: wrap;
   }
 }
 @media (max-width: 639px) {

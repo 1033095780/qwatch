@@ -1,4 +1,4 @@
-// router/index.ts — 11 条路由：登录、业务 9 页、404；未登录守卫带 next 回跳。
+// router/index.ts — 登录、业务 9 页、404；/trades 旧链接重定向到 /signals；未登录守卫带 next 回跳。
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -38,7 +38,8 @@ const router = createRouter({
           path: 'accounts/:id', name: 'account-detail', component: () => import('@/views/AccountDetail.vue'),
           meta: { title: '账户详情', parent: { title: '账户', to: '/accounts' } },
         },
-        { path: 'trades', name: 'trades', component: () => import('@/views/Trades.vue'), meta: { title: '交易流水' } },
+        { path: 'signals', name: 'signals', component: () => import('@/views/Signals.vue'), meta: { title: '交易信号' } },
+        { path: 'trades', redirect: (to) => ({ path: '/signals', query: to.query }) },
         { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警中心' } },
         { path: 'reports', name: 'reports', component: () => import('@/views/Reports.vue'), meta: { title: '日报' } },
         { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },

@@ -1,9 +1,10 @@
 // api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记。
 import { reactive } from 'vue';
 import type {
-  Account, AccountDetail, Alert, AlertsResponse, AlertStatus, Fill, FillQuery, FillsResponse,
-  ListResponse, LoginResponse, Market, Overview, Position, RangeKey, Report, ReportSummary,
-  Runner, RunnerDetail, SettingsData, SettingsPatch, TestChannelResult, User,
+  Account, AccountDetail, Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
+  LoginResponse, Report, ReportSummary, Runner, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
+  SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
+  ListResponse,
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -118,8 +119,17 @@ export const api = {
   account(id: string) {
     return request<AccountDetail>('/accounts/' + encodeURIComponent(id));
   },
-  fills(query: FillQuery = {}) {
-    return request<FillsResponse>('/fills' + qs(query as Record<string, string | number | undefined>));
+  signals(query: SignalQuery = {}) {
+    return request<SignalsResponse>('/signals' + qs(query as Record<string, string | number | undefined>));
+  },
+  tokens() {
+    return request<TokensResponse>('/tokens');
+  },
+  createToken(body: TokenCreateRequest) {
+    return request<TokenCreateResult>('/tokens', { method: 'POST', body: JSON.stringify(body) });
+  },
+  revokeToken(id: string) {
+    return request<{ record: StrategyToken }>('/tokens/' + encodeURIComponent(id) + '/revoke', { method: 'POST' });
   },
   positions(params: { account_id?: string } = {}) {
     return request<ListResponse<Position>>('/positions' + qs(params));

@@ -5,7 +5,7 @@ import type { Market } from '@/api/types';
 
 const props = defineProps<{ market: Market; venue?: string }>();
 const LABELS: Record<Market, string> = {
-  CN_A: 'A股', CN_FUT: '期货', HK: '港股', US: '美股', CRYPTO: '加密',
+  CN_A: 'A股', CN_FUT: '期货', HK: '港股', US: '美股', CRYPTO: '加密', FX: '外汇',
 };
 const label = computed(() => LABELS[props.market] ?? props.market);
 </script>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// AccountDetail.vue — 账户详情：KPI、净值曲线、持仓表、出入金、当日成交。
+// AccountDetail.vue — 账户详情：KPI、净值曲线、持仓表、出入金、当日信号。
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton } from 'naive-ui';
@@ -7,6 +7,7 @@ import { RefreshCw } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { AccountDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
+import { SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import { fmtDateTime, fmtMoney, fmtPct } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
 import EquityChart from '@/components/EquityChart.vue';
@@ -15,6 +16,8 @@ import MetricCard from '@/components/MetricCard.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import PnlText from '@/components/PnlText.vue';
 import SectionCard from '@/components/SectionCard.vue';
+import SideTag from '@/components/SideTag.vue';
+import SignalStatusTag from '@/components/SignalStatusTag.vue';
 
 const route = useRoute();
 const settings = useSettingsStore();
@@ -156,27 +159,31 @@ onMounted(() => load(true));
         </SectionCard>
       </div>
 
-      <SectionCard title="当日成交" :subtitle="'共 ' + detail.fills.length + ' 笔 · Asia/Shanghai'">
-        <div v-if="detail.fills.length" class="tbl-wrap">
+      <SectionCard title="当日信号" :subtitle="'共 ' + detail.signals.length + ' 条 · Asia/Shanghai'">
+        <template #extra>
+          <router-link :to="'/signals?account_id=' + detail.account.id" class="link-more">全部信号 →</router-link>
+        </template>
+        <div v-if="detail.signals.length" class="tbl-wrap">
           <table class="tbl tbl--compact">
             <thead>
-              <tr><th>时间</th><th>策略</th><th>品种</th><th>方向</th><th>开平</th><th class="th-num">数量</th><th class="th-num">价格</th><th class="th-num">金额</th></tr>
+              <tr><th>时间</th><th>策略</th><th>品种</th><th>方向</th><th>动作</th><th class="th-num">数量</th><th class="th-num">参考价</th><th class="th-num">金额</th><th>状态</th></tr>
             </thead>
             <tbody>
-              <tr v-for="fill in detail.fills" :key="fill.id">
-                <td class="mono nowrap">{{ fmtDateTime(fill.ts) }}</td>
-                <td class="truncate">{{ fill.runner_name }}</td>
-                <td><span class="mono">{{ fill.instrument }}</span><span class="inst">{{ fill.instrument_name }}</span></td>
-                <td><span class="side" :class="fill.side">{{ fill.side === 'buy' ? '买入' : '卖出' }}</span></td>
-                <td class="muted">{{ fill.position_effect === 'open' ? '开仓' : '平仓' }}</td>
-                <td class="td-num">{{ fill.qty }}</td>
-                <td class="td-num">{{ fill.price }}</td>
-                <td class="td-num">{{ fmtMoney(fill.amount) }}</td>
+              <tr v-for="signal in detail.signals" :key="signal.id">
+                <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
+                <td class="truncate">{{ signal.runner_name }}</td>
+                <td><span class="mono">{{ signal.instrument }}</span><span class="inst">{{ signal.instrument_name }}</span></td>
+                <td><SideTag :side="signal.side" /></td>
+                <td class="muted">{{ SIGNAL_ACTION_LABELS[signal.action] }}</td>
+                <td class="td-num">{{ signal.qty }}</td>
+                <td class="td-num">{{ signal.price }}</td>
+                <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
+                <td><SignalStatusTag :status="signal.status" /></td>
               </tr>
             </tbody>
           </table>
         </div>
-        <EmptyState v-else compact title="今日暂无成交" description="交易日收盘后统计" />
+        <EmptyState v-else compact title="今日暂无信号" description="交易日收盘后统计" />
       </SectionCard>
     </template>
   </div>
@@ -207,22 +214,13 @@ onMounted(() => load(true));
   color: var(--text-3);
   line-height: 1.2;
 }
-.side {
-  display: inline-flex;
-  height: 19px;
-  align-items: center;
-  padding: 0 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: var(--font-mono);
+.link-more {
+  font-size: 12px;
+  color: var(--text-2);
+  white-space: nowrap;
 }
-.side.buy {
-  color: var(--up);
-  background: color-mix(in srgb, var(--up) 12%, transparent);
-}
-.side.sell {
-  color: var(--down);
-  background: color-mix(in srgb, var(--down) 12%, transparent);
+.link-more:hover {
+  color: var(--primary);
 }
 .flows {
   display: flex;

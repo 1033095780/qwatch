@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Overview.vue — 总览：KPI 四卡、组合净值（区间/基准）、策略状态、策略卡片、最新成交、告警动态。
+// Overview.vue — 总览：KPI 四卡、组合净值（区间/基准）、策略状态、策略卡片、最新信号、告警动态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NSwitch, useMessage } from 'naive-ui';
 import { Activity, ArrowRight, Bell, ChevronRight, Wallet } from 'lucide-vue-next';
@@ -7,6 +7,7 @@ import { api } from '@/api/client';
 import type { Overview, RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtDateTime, fmtMoney, fmtPct, fmtSignedMoney, fromNow, pnlClass } from '@/utils/format';
+import { SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import EquityChart from '@/components/EquityChart.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import MetricCard from '@/components/MetricCard.vue';
@@ -15,6 +16,7 @@ import PnlText from '@/components/PnlText.vue';
 import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
+import SideTag from '@/components/SideTag.vue';
 import StatusDot from '@/components/StatusDot.vue';
 
 const settings = useSettingsStore();
@@ -252,11 +254,11 @@ onMounted(() => load(true));
       </div>
 
       <div class="grid grid-main">
-        <SectionCard title="最新成交" subtitle="最近 8 笔">
+        <SectionCard title="最新信号" subtitle="最近 8 条">
           <template #extra>
-            <router-link to="/trades" class="link-more">全部流水 <ChevronRight :size="13" /></router-link>
+            <router-link to="/signals" class="link-more">全部信号 <ChevronRight :size="13" /></router-link>
           </template>
-          <div v-if="data.recent_fills.length" class="tbl-wrap">
+          <div v-if="data.recent_signals.length" class="tbl-wrap">
             <table class="tbl tbl--compact">
               <thead>
                 <tr>
@@ -264,32 +266,30 @@ onMounted(() => load(true));
                   <th>策略</th>
                   <th>品种</th>
                   <th>方向</th>
+                  <th>动作</th>
                   <th class="th-num">数量</th>
-                  <th class="th-num">价格</th>
+                  <th class="th-num">参考价</th>
                   <th class="th-num">金额</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="fill in data.recent_fills" :key="fill.id">
-                  <td class="mono nowrap">{{ fmtDateTime(fill.ts) }}</td>
-                  <td class="truncate">{{ fill.runner_name }}</td>
+                <tr v-for="signal in data.recent_signals" :key="signal.id">
+                  <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
+                  <td class="truncate">{{ signal.runner_name }}</td>
                   <td>
-                    <span class="mono">{{ fill.instrument }}</span>
-                    <span class="inst-name">{{ fill.instrument_name }}</span>
+                    <span class="mono">{{ signal.instrument }}</span>
+                    <span class="inst-name">{{ signal.instrument_name }}</span>
                   </td>
-                  <td>
-                    <span class="side-tag" :class="fill.side">
-                      {{ fill.side === 'buy' ? '买入' : '卖出' }}
-                    </span>
-                  </td>
-                  <td class="td-num">{{ fill.qty }}</td>
-                  <td class="td-num">{{ fill.price }}</td>
-                  <td class="td-num">{{ fmtMoney(fill.amount) }}</td>
+                  <td><SideTag :side="signal.side" /></td>
+                  <td class="muted">{{ SIGNAL_ACTION_LABELS[signal.action] }}</td>
+                  <td class="td-num">{{ signal.qty }}</td>
+                  <td class="td-num">{{ signal.price }}</td>
+                  <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <EmptyState v-else compact title="暂无成交" description="策略产生成交后会出现在这里" />
+          <EmptyState v-else compact title="暂无信号" description="策略上报交易信号后会出现在这里" />
         </SectionCard>
 
         <SectionCard title="告警动态" subtitle="活跃告警优先">
@@ -473,23 +473,6 @@ onMounted(() => load(true));
   font-size: 10px;
   color: var(--text-3);
   line-height: 1.2;
-}
-.side-tag {
-  display: inline-flex;
-  align-items: center;
-  height: 19px;
-  padding: 0 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-.side-tag.buy {
-  color: var(--up);
-  background: color-mix(in srgb, var(--up) 12%, transparent);
-}
-.side-tag.sell {
-  color: var(--down);
-  background: color-mix(in srgb, var(--down) 12%, transparent);
 }
 .alert-feed {
   display: flex;

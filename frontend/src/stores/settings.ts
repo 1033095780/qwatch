@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/api/client';
-import type { SettingsData, TestChannelResult, UpColorScheme } from '@/api/types';
+import type { ChannelPatch, SettingsData, TestChannelResult, UpColorScheme } from '@/api/types';
 
 const SCHEME_KEY = 'qwatch.updown';
 const COLLAPSE_KEY = 'qwatch.collapsed';
@@ -78,14 +78,15 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  async function setChannelEnabled(id: string, enabled: boolean): Promise<void> {
-    const res = await api.saveSettings({ channels: [{ id, enabled }] });
+  /** 保存渠道配置（可只传要改的字段），返回掩码后的设置 */
+  async function saveChannel(patch: ChannelPatch): Promise<SettingsData> {
+    const res = await api.saveSettings({ channels: [patch] });
     data.value = res;
+    return res;
   }
 
-  async function revokeToken(id: string): Promise<void> {
-    const res = await api.saveSettings({ tokens: [{ id, revoked: true }] });
-    data.value = res;
+  async function setChannelEnabled(id: string, enabled: boolean): Promise<void> {
+    await saveChannel({ id, enabled });
   }
 
   async function testChannel(id: string): Promise<TestChannelResult> {
@@ -98,6 +99,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     upColorScheme, collapsed, refreshSeq, lastRefreshAt, data, loading, error, isGreenUp,
-    applyScheme, toggleCollapse, triggerRefresh, load, saveScheme, setChannelEnabled, revokeToken, testChannel,
+    applyScheme, toggleCollapse, triggerRefresh, load, saveScheme, saveChannel, setChannelEnabled, testChannel,
   };
 });

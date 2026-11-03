@@ -1,6 +1,8 @@
 // mock/data.mjs — qwatch mock 数据集：seeded 随机，时间相对进程启动时刻，全部为演示假数据。
 // 同一进程内 alerts/settings 可变（确认/静默/保存），刷新页面可见效果；重启进程后重置。
 
+import { randomBytes } from 'node:crypto';
+
 const DAY = 86400000;
 const HOUR = 3600000;
 const MIN = 60000;
@@ -43,6 +45,14 @@ const INSTRUMENTS = [
 ];
 const INST = Object.fromEntries(INSTRUMENTS.map((i) => [i.code, i]));
 
+// ---------- 平台 / 策略类型 / 市场 ----------
+const PLATFORM_LABELS = { ptrade: 'PTrade', qmt: 'QMT', myquant: '掘金', tqsdk: '天勤', custom: '自研' };
+const STRATEGY_TYPE_LABELS = {
+  trend: '趋势', arbitrage: '套利', intraday: '日内', grid: '网格',
+  multifactor: '多因子', market_making: '做市', other: '其他',
+};
+const MARKET_LABELS = { CN_A: 'A股', CN_FUT: '期货', FX: '外汇', CRYPTO: '加密', US: '美股' };
+
 // ---------- 账户 ----------
 const ACCOUNT_DEFS = [
   { id: 'qmt:8888', name: 'QMT 主账户', venue: 'XSGE', market: 'CN_FUT', currency: 'CNY', initial: 700000 },
@@ -54,49 +64,56 @@ const ACCOUNT_DEFS = [
 const RUNNER_DEFS = [
   {
     id: 'cta_rb-prod', name: '螺纹钢趋势', strategy: 'me/cta_rb', version: '1.2.0',
-    market: 'CN_FUT', venue: 'XSGE', status: 'running', accounts: ['qmt:8888'],
+    market: 'CN_FUT', venue: 'XSGE', platform: 'qmt', strategy_type: 'trend', tags: ['期货主账户', '夜盘', '低频'],
+    status: 'running', accounts: ['qmt:8888'],
     equity: 462300.12, today_pnl: 6240.5, total_return_pct: 32.64, max_drawdown_pct: 8.02,
     uptime_24h: 99.82, last_heartbeat_ago: 4 * 1000, heartbeat_every: 10,
     sharpe: 1.86, win_rate_pct: 57.3, uptime_30d: 99.71, initial: 348000, seed: 11,
   },
   {
     id: 'cta_au-night', name: '沪金夜盘', strategy: 'me/cta_au', version: '0.9.4',
-    market: 'CN_FUT', venue: 'XSGE', status: 'running', accounts: ['qmt:8888'],
+    market: 'CN_FUT', venue: 'XSGE', platform: 'qmt', strategy_type: 'trend', tags: ['夜盘', '贵金属', '期货主账户'],
+    status: 'running', accounts: ['qmt:8888'],
     equity: 212845.3, today_pnl: -1120.3, total_return_pct: 18.2, max_drawdown_pct: 6.41,
     uptime_24h: 99.31, last_heartbeat_ago: 6 * 1000, heartbeat_every: 10,
     sharpe: 1.41, win_rate_pct: 52.8, uptime_30d: 99.12, initial: 180000, seed: 12,
   },
   {
     id: 'cta_if-intraday', name: '股指日内动量', strategy: 'me/cta_if', version: '2.0.1',
-    market: 'CN_FUT', venue: 'CFFEX', status: 'running', accounts: ['cffex:0666'],
+    market: 'CN_FUT', venue: 'CFFEX', platform: 'ptrade', strategy_type: 'intraday', tags: ['股指', '日内', '对冲'],
+    status: 'running', accounts: ['cffex:0666'],
     equity: 318720.55, today_pnl: 4812.6, total_return_pct: 21.47, max_drawdown_pct: 5.87,
     uptime_24h: 99.97, last_heartbeat_ago: 3 * 1000, heartbeat_every: 10,
     sharpe: 2.04, win_rate_pct: 55.1, uptime_30d: 99.94, initial: 262000, seed: 13,
   },
   {
     id: 'cta_ag-swing', name: '白银波段', strategy: 'me/cta_ag', version: '1.1.2',
-    market: 'CN_FUT', venue: 'XSGE', status: 'degraded', accounts: ['qmt:8888'],
+    market: 'CN_FUT', venue: 'XSGE', platform: 'myquant', strategy_type: 'trend', tags: ['贵金属', '波段', '夜盘'],
+    status: 'degraded', accounts: ['qmt:8888'],
     equity: 187352.48, today_pnl: -3485.2, total_return_pct: 12.44, max_drawdown_pct: 9.35,
     uptime_24h: 96.42, last_heartbeat_ago: 42 * 1000, heartbeat_every: 10,
     sharpe: 0.92, win_rate_pct: 48.6, uptime_30d: 97.03, initial: 166000, seed: 14,
   },
   {
     id: 'cta_cu-breakout', name: '沪铜突破', strategy: 'me/cta_cu', version: '0.8.7',
-    market: 'CN_FUT', venue: 'XSGE', status: 'offline', accounts: ['qmt:8888'],
+    market: 'CN_FUT', venue: 'XSGE', platform: 'tqsdk', strategy_type: 'multifactor', tags: ['有色金属', '突破', '期货主账户'],
+    status: 'offline', accounts: ['qmt:8888'],
     equity: 45120.6, today_pnl: 0, total_return_pct: -3.21, max_drawdown_pct: 13.88,
     uptime_24h: 41.35, last_heartbeat_ago: 42 * MIN, heartbeat_every: 10,
     sharpe: -0.24, win_rate_pct: 44.2, uptime_30d: 88.41, initial: 46600, seed: 15,
   },
   {
     id: 'stock_ma600519', name: '茅台均线轮动', strategy: 'me/stock_ma', version: '1.0.3',
-    market: 'CN_A', venue: 'XSHG', status: 'off_hours', accounts: ['xshg:6001'],
+    market: 'CN_A', venue: 'XSHG', platform: 'ptrade', strategy_type: 'trend', tags: ['A股', '低频', '蓝筹'],
+    status: 'off_hours', accounts: ['xshg:6001'],
     equity: 71500.0, today_pnl: 1260.0, total_return_pct: 8.44, max_drawdown_pct: 4.62,
     uptime_24h: 98.9, last_heartbeat_ago: 9 * MIN, heartbeat_every: 10,
     sharpe: 1.12, win_rate_pct: 50.0, uptime_30d: 98.77, initial: 66000, seed: 16,
   },
   {
     id: 'stock_etf-grid', name: 'ETF 网格 · 低波', strategy: 'me/stock_grid', version: '0.6.0',
-    market: 'CN_A', venue: 'XSHG', status: 'off_hours', accounts: ['xshg:6001'],
+    market: 'CN_A', venue: 'XSHG', platform: 'custom', strategy_type: 'grid', tags: ['A股', 'ETF', '网格'],
+    status: 'off_hours', accounts: ['xshg:6001'],
     equity: 34300.0, today_pnl: 522.4, total_return_pct: -2.61, max_drawdown_pct: 7.14,
     uptime_24h: 100, last_heartbeat_ago: 7 * HOUR, heartbeat_every: 10,
     sharpe: -0.31, win_rate_pct: 46.9, uptime_30d: 99.4, initial: 35200, seed: 17,
@@ -375,10 +392,40 @@ for (let i = 0; i < TOTAL_FILLS; i += 1) {
 }
 fills.sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts));
 
-function todayFills() {
-  const today = shDate(NOW);
-  return fills.filter((f) => shDate(Date.parse(f.ts)) === today);
-}
+// ---------- 交易信号（由 fills 派生：信号是策略的委托意图，status 表示执行状态） ----------
+// status：每 20 条里 18 filled（90%）、1 pending（5%）、1 ignored（5%）；action 由 position_effect 推导。
+const signals = fills.map((fill, i) => {
+  const def = runnerMap[fill.runner_id];
+  const inst = INST[fill.instrument];
+  const bucket = i % 20;
+  const status = bucket === 0 ? 'pending' : bucket === 1 ? 'ignored' : 'filled';
+  const action = fill.position_effect === 'open'
+    ? (i % 10 < 3 ? 'add' : 'open')
+    : (i % 10 < 3 ? 'reduce' : 'close');
+  return {
+    id: 'sig_' + fill.id.slice(5),
+    ts: fill.ts,
+    runner_id: fill.runner_id,
+    runner_name: fill.runner_name,
+    platform: def.platform,
+    platform_label: PLATFORM_LABELS[def.platform],
+    strategy_type: def.strategy_type,
+    strategy_type_label: STRATEGY_TYPE_LABELS[def.strategy_type],
+    market: inst.market,
+    market_label: MARKET_LABELS[inst.market],
+    account_id: fill.account_id,
+    account_name: fill.account_name,
+    instrument: fill.instrument,
+    instrument_name: fill.instrument_name,
+    side: fill.side,
+    action,
+    price: fill.price,
+    qty: fill.qty,
+    amount: fill.amount,
+    status,
+    tags: [...def.tags],
+  };
+});
 
 // ---------- 告警 ----------
 const ALERT_DEFS = [
@@ -493,27 +540,45 @@ for (let i = 0; i < reportDates.length; i += 1) {
 }
 
 // ---------- 设置 ----------
+// 渠道完整 webhook/secret 只存内存；GET /settings 返回掩码，PUT 支持只传要改的字段。
+const CHANNEL_SECRETS = {
+  'dingtalk-main': {
+    webhook: 'https://oapi.dingtalk.com/robot/send?access_token=8f3a2c7d91b04e6fa5c2d8e71b3a9f46',
+    secret: 'SECa1b2c3d4e5f6789012345678abcd9c1e',
+  },
+  'dingtalk-backup': {
+    webhook: 'https://oapi.dingtalk.com/robot/send?access_token=7b81d2e4a6c04f1e9b3d5a7c2e8f0d17',
+    secret: 'SEC9f8e7d6c5b4a39281706f5e4d3c2d40',
+  },
+};
+const maskWebhook = (url) => String(url || '').replace(/access_token=([^&]+)/, (_, token) => 'access_token=****' + token.slice(-4));
+const maskSecret = (secret) => {
+  const s = String(secret || '');
+  return s.length >= 8 ? 'SEC****' + s.slice(-4) : '未配置';
+};
+function channelView(channel) {
+  const secrets = CHANNEL_SECRETS[channel.id] || {};
+  return {
+    ...channel,
+    webhook_masked: maskWebhook(secrets.webhook),
+    secret_masked: maskSecret(secrets.secret),
+    at_mobiles: [...channel.at_mobiles],
+  };
+}
 const settings = {
   user: { name: 'Trader', role: 'owner', timezone: 'Asia/Shanghai' },
   up_color_scheme: 'red_up',
   channels: [
     {
-      id: 'dingtalk-main', name: '钉钉 · 主机器人', type: 'dingtalk', enabled: true,
-      webhook: 'https://oapi.dingtalk.com/robot/send?access_token=****f3a2',
-      secret_masked: 'SEC****9c1e', sign_enabled: true, rate_limit: '15 条/分钟',
+      id: 'dingtalk-main', name: '钉钉 · 主机器人', type: 'dingtalk_robot', enabled: true,
+      at_mobiles: ['13800138000'], rate_limit_per_min: 15,
       last_test_at: ISO(NOW - 3 * HOUR), last_test_ok: true,
     },
     {
-      id: 'dingtalk-backup', name: '钉钉 · 备用机器人', type: 'dingtalk', enabled: false,
-      webhook: 'https://oapi.dingtalk.com/robot/send?access_token=****7b81',
-      secret_masked: 'SEC****2d40', sign_enabled: true, rate_limit: '15 条/分钟',
+      id: 'dingtalk-backup', name: '钉钉 · 备用机器人', type: 'dingtalk_robot', enabled: false,
+      at_mobiles: [], rate_limit_per_min: 15,
       last_test_at: null, last_test_ok: null,
     },
-  ],
-  tokens: [
-    { id: 'tok_rb', name: 'cta_rb 生产', scope: 'strategy:write', prefix: 'qwt_9f2a', created_at: ISO(NOW - 88 * DAY), last_used_at: ISO(NOW - 4 * 1000), revoked: false },
-    { id: 'tok_if', name: 'cta_if 生产', scope: 'strategy:write', prefix: 'qwt_4c81', created_at: ISO(NOW - 61 * DAY), last_used_at: ISO(NOW - 3 * 1000), revoked: false },
-    { id: 'tok_readonly', name: '只读看板令牌', scope: 'readonly', prefix: 'qwr_1b7d', created_at: ISO(NOW - 25 * DAY), last_used_at: ISO(NOW - 2 * HOUR), revoked: false },
   ],
   calendars: [
     { id: 'cn_a', name: 'A股', timezone: 'Asia/Shanghai', sessions: ['09:15-11:30', '13:00-15:00'], night: false, holidays: 'cn_a' },
@@ -528,7 +593,7 @@ const settings = {
     totp_enabled: false,
     last_password_change: ISO(NOW - 45 * DAY),
   },
-  about: { version: '0.1.0', build: 'mock-20261103', mode: '演示态 · 全部为假数据', license: 'Apache-2.0' },
+  about: { version: '0.1.0', build: '2026.11.03', mode: '本地部署', license: 'Apache-2.0' },
 };
 
 // ---------- 查询函数 ----------
@@ -540,6 +605,11 @@ function runnerView(def) {
     version: def.version,
     market: def.market,
     venue: def.venue,
+    platform: def.platform,
+    platform_label: PLATFORM_LABELS[def.platform],
+    strategy_type: def.strategy_type,
+    strategy_type_label: STRATEGY_TYPE_LABELS[def.strategy_type],
+    tags: def.tags,
     status: def.status,
     accounts: def.accounts.map((id) => ({ id, name: accountMap[id].name, venue: accountMap[id].venue })),
     equity: money(def.equity),
@@ -571,7 +641,7 @@ export function getOverview(query) {
     benchmark: benchmark.map((p) => ({ ts: ISO(p.ts), value: money(p.value) })),
     runners: RUNNER_DEFS.map(runnerView),
     alerts: alerts.filter((a) => a.status !== 'resolved').slice(0, 4),
-    recent_fills: fills.slice(0, 8),
+    recent_signals: signals.slice(0, 8),
   };
 }
 
@@ -601,7 +671,7 @@ export function getRunnerDetail(id, query) {
     drawdown,
     heartbeat_timeline: base.heartbeat_timeline,
     outages: base.outages,
-    fills: fills.filter((f) => f.runner_id === id).slice(0, 40),
+    signals: signals.filter((s) => s.runner_id === id).slice(0, 40),
     positions: base.positions,
     alerts: alerts.filter((a) => a.runner_id === id),
     config: {
@@ -656,28 +726,34 @@ export function getAccountDetail(id) {
         };
       })),
     cash_flows: a.cash_flows,
-    fills: accountFills.filter((f) => shDate(Date.parse(f.ts)) === shDate(NOW)).slice(0, 30),
+    signals: signals.filter((s) => s.account_id === id && shDate(Date.parse(s.ts)) === shDate(NOW)).slice(0, 30),
     total_return_pct: num(((Number(a.equity) / Number(a.initial_equity)) - 1) * 100),
   };
 }
 
-export function getFills(query) {
-  let items = fills;
-  if (query.runner_id) items = items.filter((f) => f.runner_id === query.runner_id);
-  if (query.account_id) items = items.filter((f) => f.account_id === query.account_id);
-  if (query.market) items = items.filter((f) => INST[f.instrument].market === query.market);
-  if (query.instrument) items = items.filter((f) => f.instrument.toLowerCase().includes(String(query.instrument).toLowerCase()));
-  if (query.side) items = items.filter((f) => f.side === query.side);
-  if (query.from) items = items.filter((f) => Date.parse(f.ts) >= Date.parse(query.from));
-  if (query.to) items = items.filter((f) => Date.parse(f.ts) <= Date.parse(query.to));
-  const limit = clamp(parseInt(query.limit, 10) || 20, 1, 200);
-  const offset = clamp(parseInt(query.cursor, 10) || 0, 0, items.length);
-  const slice = items.slice(offset, offset + limit);
+export function getSignals(query) {
+  let items = signals;
+  if (query.runner_id) items = items.filter((s) => s.runner_id === query.runner_id);
+  if (query.account_id) items = items.filter((s) => s.account_id === query.account_id);
+  if (query.platform) items = items.filter((s) => s.platform === query.platform);
+  if (query.market) items = items.filter((s) => s.market === query.market);
+  if (query.strategy_type) items = items.filter((s) => s.strategy_type === query.strategy_type);
+  if (query.side) items = items.filter((s) => s.side === query.side);
+  if (query.status) items = items.filter((s) => s.status === query.status);
+  if (query.instrument) items = items.filter((s) => s.instrument.toLowerCase().includes(String(query.instrument).toLowerCase()));
+  if (query.tag) items = items.filter((s) => s.tags.includes(query.tag));
+  if (query.from) items = items.filter((s) => Date.parse(s.ts) >= Date.parse(query.from));
+  if (query.to) items = items.filter((s) => Date.parse(s.ts) <= Date.parse(query.to));
+  const total = items.length;
+  const sumAmount = items.reduce((sum, s) => sum + Number(s.amount), 0);
+  const limit = clamp(parseInt(query.limit, 10) || 20, 1, 500);
+  const offset = clamp(parseInt(query.cursor, 10) || 0, 0, total);
   return {
-    items: slice,
-    total: items.length,
+    items: items.slice(offset, offset + limit),
+    total,
+    sum_amount: money(sumAmount),
     limit,
-    next_cursor: offset + limit < items.length ? String(offset + limit) : null,
+    next_cursor: offset + limit < total ? String(offset + limit) : null,
   };
 }
 
@@ -740,7 +816,7 @@ export function getReport(date) {
 }
 
 export function getSettings() {
-  return JSON.parse(JSON.stringify(settings));
+  return JSON.parse(JSON.stringify({ ...settings, channels: settings.channels.map(channelView) }));
 }
 
 export function saveSettings(patch) {
@@ -750,19 +826,85 @@ export function saveSettings(patch) {
       settings.security = { ...settings.security, ...patch.security };
     }
     if (Array.isArray(patch.channels)) {
-      settings.channels = settings.channels.map((ch) => {
-        const next = patch.channels.find((c) => c.id === ch.id);
-        return next ? { ...ch, enabled: !!next.enabled } : ch;
-      });
-    }
-    if (Array.isArray(patch.tokens)) {
-      settings.tokens = settings.tokens.map((token) => {
-        const next = patch.tokens.find((t) => t.id === token.id);
-        return next && next.revoked ? { ...token, revoked: true } : token;
+      patch.channels.forEach((next) => {
+        const channel = settings.channels.find((c) => c.id === next.id);
+        if (!channel) return;
+        if (typeof next.enabled === 'boolean') channel.enabled = next.enabled;
+        if (Array.isArray(next.at_mobiles)) {
+          channel.at_mobiles = next.at_mobiles.map((m) => String(m).trim()).filter(Boolean).slice(0, 8);
+        }
+        const secrets = CHANNEL_SECRETS[channel.id] || (CHANNEL_SECRETS[channel.id] = {});
+        if (typeof next.webhook === 'string' && next.webhook.trim()) secrets.webhook = next.webhook.trim();
+        if (typeof next.secret === 'string' && next.secret.trim()) secrets.secret = next.secret.trim();
       });
     }
   }
   return getSettings();
+}
+
+// ---------- 策略接入令牌（完整 token 只在创建响应中出现一次） ----------
+const PLATFORM_VALUES = Object.keys(PLATFORM_LABELS);
+const STRATEGY_TYPE_VALUES = Object.keys(STRATEGY_TYPE_LABELS);
+const TOKEN_MARKET_VALUES = Object.keys(MARKET_LABELS);
+const maskToken = (token) => 'qw_' + token.slice(0, 4) + '…' + token.slice(-4);
+
+function tokenView(record) {
+  return {
+    ...record,
+    platform_label: PLATFORM_LABELS[record.platform] || '',
+    strategy_type_label: STRATEGY_TYPE_LABELS[record.strategy_type] || '',
+    markets: [...record.markets],
+    tags: [...record.tags],
+  };
+}
+
+const tokens = [
+  {
+    id: 'tok_8f3a2b7d', name: 'cta_rb 生产接入', platform: 'qmt', markets: ['CN_FUT'], strategy_type: 'trend',
+    tags: ['期货主账户', '夜盘'], note: '主力策略接入令牌，轮换周期 90 天',
+    token_prefix: 'qw_8f3a…0c21', status: 'active',
+    created_at: ISO(NOW - 88 * DAY), last_used_at: ISO(NOW - 4 * 1000), request_count: 128430,
+  },
+  {
+    id: 'tok_4c81de09', name: 'cta_if 仿真接入', platform: 'ptrade', markets: ['CN_FUT'], strategy_type: 'intraday',
+    tags: ['股指', '日内'], note: '仿真环境令牌，已按计划轮换',
+    token_prefix: 'qw_4c81…e09b', status: 'revoked',
+    created_at: ISO(NOW - 61 * DAY), last_used_at: ISO(NOW - 12 * DAY), request_count: 2150,
+  },
+];
+
+export function getTokens() {
+  return { items: tokens.map(tokenView), total: tokens.length };
+}
+
+export function createToken(body) {
+  const payload = body && typeof body === 'object' ? body : {};
+  const name = String(payload.name || '').trim();
+  if (!name) return { error: '策略名称必填' };
+  const token = randomBytes(32).toString('hex');
+  const record = {
+    id: 'tok_' + randomBytes(4).toString('hex'),
+    name,
+    platform: PLATFORM_VALUES.includes(payload.platform) ? payload.platform : '',
+    markets: Array.isArray(payload.markets) ? payload.markets.filter((m) => TOKEN_MARKET_VALUES.includes(m)) : [],
+    strategy_type: STRATEGY_TYPE_VALUES.includes(payload.strategy_type) ? payload.strategy_type : '',
+    tags: Array.isArray(payload.tags) ? payload.tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 8) : [],
+    note: String(payload.note || '').trim(),
+    token_prefix: maskToken(token),
+    status: 'active',
+    created_at: ISO(Date.now()),
+    last_used_at: null,
+    request_count: 0,
+  };
+  tokens.unshift(record);
+  return { token, record: tokenView(record) };
+}
+
+export function revokeToken(id) {
+  const record = tokens.find((t) => t.id === id);
+  if (!record) return null;
+  record.status = 'revoked';
+  return tokenView(record);
 }
 
 export function testChannel(id) {
@@ -773,10 +915,10 @@ export function testChannel(id) {
   return {
     ok: true,
     channel_id: ch.id,
-    message: '测试消息已发送：qwatch 通知渠道联通正常（演示态，未真正发送）',
+    message: '测试消息已发送：qwatch 通知渠道联通正常',
     latency_ms: Math.round(180 + rng() * 320),
     at: ch.last_test_at,
   };
 }
 
-export const mockMeta = { now: ISO(NOW), totalFills: fills.length, totalAlerts: alerts.length };
+export const mockMeta = { now: ISO(NOW), totalSignals: signals.length, totalTokens: tokens.length, totalAlerts: alerts.length };

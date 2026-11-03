@@ -1,8 +1,9 @@
 // mock/api.mjs — qwatch mock API（/api/v1）：被 Vite dev 中间件与 mock-server.mjs 共用。
 import {
   getOverview, getRunners, getRunnerDetail, getAccounts, getAccountDetail,
-  getFills, getPositions, getAlerts, acknowledgeAlert, silenceAlert,
-  getReports, getReport, getSettings, saveSettings, testChannel, mockMeta,
+  getSignals, getPositions, getAlerts, acknowledgeAlert, silenceAlert,
+  getReports, getReport, getSettings, saveSettings, testChannel,
+  getTokens, createToken, revokeToken, mockMeta,
 } from './data.mjs';
 
 export const MOCK_TOKEN = 'mock-token';
@@ -48,7 +49,7 @@ export async function handleApi(req, res) {
     if (method === 'POST' && route === '/auth/login') {
       const body = await readBody(req);
       if (body.password !== 'qwatch') {
-        send(res, 401, { detail: '密码错误，演示密码为 qwatch' });
+        send(res, 401, { detail: '密码错误' });
         return true;
       }
       send(res, 200, { token: MOCK_TOKEN, user: { name: 'Trader', role: 'owner' }, demo: true });
@@ -100,8 +101,8 @@ export async function handleApi(req, res) {
       return true;
     }
 
-    if (method === 'GET' && route === '/fills') {
-      send(res, 200, getFills(query));
+    if (method === 'GET' && route === '/signals') {
+      send(res, 200, getSignals(query));
       return true;
     }
     if (method === 'GET' && route === '/positions') {
@@ -137,6 +138,25 @@ export async function handleApi(req, res) {
       const report = getReport(decodeURIComponent(reportMatch[1]));
       if (!report) return send(res, 404, { detail: '日报不存在' }), true;
       send(res, 200, report);
+      return true;
+    }
+
+    if (method === 'GET' && route === '/tokens') {
+      send(res, 200, getTokens());
+      return true;
+    }
+    if (method === 'POST' && route === '/tokens') {
+      const body = await readBody(req);
+      const result = createToken(body);
+      if (result.error) { send(res, 400, { detail: result.error }); return true; }
+      send(res, 201, result);
+      return true;
+    }
+    const tokenRevokeMatch = route.match(/^\/tokens\/([^/]+)\/revoke$/);
+    if (method === 'POST' && tokenRevokeMatch) {
+      const record = revokeToken(decodeURIComponent(tokenRevokeMatch[1]));
+      if (!record) { send(res, 404, { detail: '令牌不存在' }); return true; }
+      send(res, 200, { record });
       return true;
     }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// StrategyDetail.vue — 策略详情：状态头、6 KPI、Tabs（净值/成交/持仓/心跳/告警/配置）。
+// StrategyDetail.vue — 策略详情：状态头、6 KPI、Tabs（净值/信号/持仓/心跳/告警/配置）。
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, useMessage } from 'naive-ui';
@@ -7,6 +7,7 @@ import { ArrowUpRight, Copy, RefreshCw } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
+import { SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import {
   fmtDateTime, fmtDuration, fmtFullDateTime, fmtMoney, fmtPct, fmtUtc, fromNow, pnlClass,
 } from '@/utils/format';
@@ -20,6 +21,8 @@ import PnlText from '@/components/PnlText.vue';
 import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
+import SideTag from '@/components/SideTag.vue';
+import SignalStatusTag from '@/components/SignalStatusTag.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import MarketTag from '@/components/MarketTag.vue';
 import TabBar from '@/components/TabBar.vue';
@@ -39,7 +42,7 @@ const activeTab = ref('equity');
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'equity', label: '净值' },
-  { key: 'fills', label: '成交', count: detail.value?.fills.length ?? 0 },
+  { key: 'signals', label: '信号', count: detail.value?.signals.length ?? 0 },
   { key: 'positions', label: '持仓', count: detail.value?.positions.length ?? 0 },
   { key: 'heartbeat', label: '心跳' },
   { key: 'alerts', label: '告警', count: detail.value?.alerts.length ?? 0 },
@@ -115,13 +118,16 @@ onMounted(() => load(true));
         <template #extra>
           <StatusTag :status="detail.runner.status" />
           <MarketTag :market="detail.runner.market" :venue="detail.runner.venue" />
+          <span v-if="detail.runner.platform_label" class="chip">{{ detail.runner.platform_label }}</span>
+          <span v-if="detail.runner.strategy_type_label" class="chip">{{ detail.runner.strategy_type_label }}</span>
+          <span v-for="tag in detail.runner.tags" :key="tag" class="chip chip--soft">#{{ tag }}</span>
           <n-button size="small" @click="copyId">
             <template #icon><Copy :size="13" /></template>
             复制标识
           </n-button>
-          <n-button size="small" tag="a" :href="'/trades?runner_id=' + detail.runner.id" @click.prevent="$router.push('/trades?runner_id=' + detail.runner.id)">
+          <n-button size="small" tag="a" :href="'/signals?runner_id=' + detail.runner.id" @click.prevent="$router.push('/signals?runner_id=' + detail.runner.id)">
             <template #icon><ArrowUpRight :size="13" /></template>
-            查看成交
+            查看信号
           </n-button>
           <n-button size="small" :loading="refreshing" @click="load()">
             <template #icon><RefreshCw :size="13" /></template>
@@ -173,41 +179,38 @@ onMounted(() => load(true));
           </div>
         </div>
 
-        <div v-show="activeTab === 'fills'" class="tab-panel">
+        <div v-show="activeTab === 'signals'" class="tab-panel">
           <div class="panel-head">
             <div>
-              <h2 class="panel-title">最近成交</h2>
-              <p class="panel-sub">仅展示最近 {{ detail.fills.length }} 笔；完整体验请到交易流水</p>
+              <h2 class="panel-title">最近信号</h2>
+              <p class="panel-sub">仅展示最近 {{ detail.signals.length }} 条；完整信号流水请到交易信号</p>
             </div>
-            <n-button size="small" @click="$router.push('/trades?runner_id=' + detail.runner.id)">全部流水</n-button>
+            <n-button size="small" @click="$router.push('/signals?runner_id=' + detail.runner.id)">全部信号</n-button>
           </div>
-          <div v-if="detail.fills.length" class="tbl-wrap">
+          <div v-if="detail.signals.length" class="tbl-wrap">
             <table class="tbl tbl--compact">
               <thead>
                 <tr>
-                  <th>时间</th><th>账户</th><th>品种</th><th>方向</th><th>开平</th>
-                  <th class="th-num">数量</th><th class="th-num">成交价</th><th class="th-num">金额</th><th class="th-num">手续费</th><th>状态</th>
+                  <th>时间</th><th>账户</th><th>品种</th><th>方向</th><th>动作</th>
+                  <th class="th-num">数量</th><th class="th-num">参考价</th><th class="th-num">金额</th><th>状态</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="fill in detail.fills" :key="fill.id">
-                  <td class="mono nowrap">{{ fmtDateTime(fill.ts) }}</td>
-                  <td class="truncate">{{ fill.account_name }}</td>
-                  <td><span class="mono">{{ fill.instrument }}</span><span class="inst">{{ fill.instrument_name }}</span></td>
-                  <td><span class="side" :class="fill.side">{{ fill.side === 'buy' ? '买入' : '卖出' }}</span></td>
-                  <td class="muted">{{ fill.position_effect === 'open' ? '开仓' : '平仓' }}</td>
-                  <td class="td-num">{{ fill.qty }}</td>
-                  <td class="td-num">{{ fill.price }}</td>
-                  <td class="td-num">{{ fmtMoney(fill.amount) }}</td>
-                  <td class="td-num faint">{{ fmtMoney(fill.fee) }}</td>
-                  <td>
-                    <span class="fill-status" :class="fill.status">{{ fill.status === 'filled' ? '已成交' : '部分成交' }}</span>
-                  </td>
+                <tr v-for="signal in detail.signals" :key="signal.id">
+                  <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
+                  <td class="truncate">{{ signal.account_name }}</td>
+                  <td><span class="mono">{{ signal.instrument }}</span><span class="inst">{{ signal.instrument_name }}</span></td>
+                  <td><SideTag :side="signal.side" /></td>
+                  <td class="muted">{{ SIGNAL_ACTION_LABELS[signal.action] }}</td>
+                  <td class="td-num">{{ signal.qty }}</td>
+                  <td class="td-num">{{ signal.price }}</td>
+                  <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
+                  <td><SignalStatusTag :status="signal.status" /></td>
                 </tr>
               </tbody>
             </table>
           </div>
-          <EmptyState v-else compact title="暂无成交" description="该策略近 3 个交易日没有成交记录" />
+          <EmptyState v-else compact title="暂无信号" description="该策略近 3 个交易日没有信号记录" />
         </div>
 
         <div v-show="activeTab === 'positions'" class="tab-panel">
@@ -362,32 +365,6 @@ onMounted(() => load(true));
   font-size: 10px;
   color: var(--text-3);
   line-height: 1.2;
-}
-.side {
-  display: inline-flex;
-  height: 19px;
-  align-items: center;
-  padding: 0 6px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-.side.buy {
-  color: var(--up);
-  background: color-mix(in srgb, var(--up) 12%, transparent);
-}
-.side.sell {
-  color: var(--down);
-  background: color-mix(in srgb, var(--down) 12%, transparent);
-}
-.fill-status {
-  font-size: 11px;
-}
-.fill-status.filled {
-  color: #2ecc8f;
-}
-.fill-status.partial {
-  color: #f5a524;
 }
 .hb-stats {
   display: grid;

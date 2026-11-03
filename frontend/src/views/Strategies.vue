@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Strategies.vue — 策略列表：搜索 + 状态/市场/账户筛选 + 卡片网格 + 空状态。
+// Strategies.vue — 策略列表：搜索 + 状态/市场/平台/类型/标签/账户筛选 + 卡片网格 + 空状态。
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
 import { RefreshCw, Search, SlidersHorizontal } from 'lucide-vue-next';
@@ -20,6 +20,9 @@ const error = ref('');
 const keyword = ref('');
 const statusFilter = ref<RunnerStatus | 'all'>('all');
 const marketFilter = ref<'all' | 'CN_A' | 'CN_FUT'>('all');
+const platformFilter = ref<string>('all');
+const typeFilter = ref<string>('all');
+const tagFilter = ref<string>('all');
 const accountFilter = ref<string>('all');
 
 const statusOptions = [
@@ -38,12 +41,30 @@ const accountOptions = computed(() => [
   { label: '全部账户', value: 'all' },
   ...accounts.value.map((a) => ({ label: a.name, value: a.id })),
 ]);
+const platformOptions = computed(() => {
+  const seen = new Map<string, string>();
+  runners.value.forEach((r) => { if (r.platform) seen.set(r.platform, r.platform_label); });
+  return [{ label: '全部平台', value: 'all' }, ...[...seen].map(([value, label]) => ({ value, label }))];
+});
+const typeOptions = computed(() => {
+  const seen = new Map<string, string>();
+  runners.value.forEach((r) => { if (r.strategy_type) seen.set(r.strategy_type, r.strategy_type_label); });
+  return [{ label: '全部类型', value: 'all' }, ...[...seen].map(([value, label]) => ({ value, label }))];
+});
+const tagOptions = computed(() => {
+  const tags = new Set<string>();
+  runners.value.forEach((r) => r.tags.forEach((tag) => tags.add(tag)));
+  return [{ label: '全部标签', value: 'all' }, ...[...tags].sort().map((tag) => ({ value: tag, label: tag }))];
+});
 
 const filtered = computed(() => {
   const q = keyword.value.trim().toLowerCase();
   return runners.value.filter((runner) => {
     if (statusFilter.value !== 'all' && runner.status !== statusFilter.value) return false;
     if (marketFilter.value !== 'all' && runner.market !== marketFilter.value) return false;
+    if (platformFilter.value !== 'all' && runner.platform !== platformFilter.value) return false;
+    if (typeFilter.value !== 'all' && runner.strategy_type !== typeFilter.value) return false;
+    if (tagFilter.value !== 'all' && !runner.tags.includes(tagFilter.value)) return false;
     if (accountFilter.value !== 'all' && !runner.accounts.some((a) => a.id === accountFilter.value)) return false;
     if (q && !(runner.name + runner.strategy + runner.id).toLowerCase().includes(q)) return false;
     return true;
@@ -51,7 +72,9 @@ const filtered = computed(() => {
 });
 
 const hasFilter = computed(
-  () => !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all' || accountFilter.value !== 'all',
+  () => !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all'
+    || platformFilter.value !== 'all' || typeFilter.value !== 'all' || tagFilter.value !== 'all'
+    || accountFilter.value !== 'all',
 );
 
 async function load(initial = false): Promise<void> {
@@ -72,6 +95,9 @@ function resetFilters(): void {
   keyword.value = '';
   statusFilter.value = 'all';
   marketFilter.value = 'all';
+  platformFilter.value = 'all';
+  typeFilter.value = 'all';
+  tagFilter.value = 'all';
   accountFilter.value = 'all';
 }
 
@@ -98,6 +124,9 @@ onMounted(() => load(true));
         </n-input>
         <n-select v-model:value="statusFilter" :options="statusOptions" size="small" class="select" />
         <n-select v-model:value="marketFilter" :options="marketOptions" size="small" class="select" />
+        <n-select v-model:value="platformFilter" :options="platformOptions" size="small" class="select" />
+        <n-select v-model:value="typeFilter" :options="typeOptions" size="small" class="select" />
+        <n-select v-model:value="tagFilter" :options="tagOptions" size="small" class="select" />
         <n-select v-model:value="accountFilter" :options="accountOptions" size="small" class="select select-wide" />
       </div>
       <div class="toolbar-right">
