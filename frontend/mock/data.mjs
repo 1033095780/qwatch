@@ -467,13 +467,6 @@ const ALERT_DEFS = [
     labels: { host: 'trade-pc', pid: '12884' },
   },
   {
-    id: 'alert_0007', severity: 'P2', status: 'acknowledged', rule: 'daily_report',
-    runner: 'stock_ma600519', offset: -20 * HOUR,
-    summary: '日报已生成：2026-11-02 收益 +1.24%，成交 6 笔，无异常',
-    labels: { date: shDate(NOW - DAY), channel: 'dingtalk' },
-    acked: true,
-  },
-  {
     id: 'alert_0008', severity: 'P2', status: 'resolved', rule: 'risk_limit',
     runner: 'cta_rb-prod', offset: -3 * DAY - 2 * HOUR, duration: 60,
     summary: '已恢复：日盈利达到 +1.20%，触发移动止盈，仓位降至 50%',

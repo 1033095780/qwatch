@@ -37,7 +37,6 @@ const RULE_LABEL: Record<string, string> = {
   drawdown_breach: '回撤超阈值',
   daily_loss_limit: '日亏损超限',
   fill_burst: '成交突发',
-  daily_report: '日报生成',
   risk_limit: '风控触发',
 };
 
