@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // Login.vue — 密码登录；记住我决定 localStorage / sessionStorage；next 回跳。
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NButton, NCheckbox, NInput, useMessage } from 'naive-ui';
+import type { InputInst } from 'naive-ui';
 import { ArrowRight, LockKeyhole } from 'lucide-vue-next';
 import { useAuthStore } from '@/stores/auth';
 import BrandMark from '@/components/BrandMark.vue';
@@ -15,6 +16,11 @@ const message = useMessage();
 const password = ref('');
 const remember = ref(true);
 const errorText = ref('');
+const passwordRef = ref<InputInst | null>(null);
+
+onMounted(() => {
+  passwordRef.value?.focus();
+});
 
 const nextPath = computed(() => {
   const next = route.query.next;
@@ -59,12 +65,13 @@ async function submit(): Promise<void> {
           <label class="field-label" for="password">访问密码</label>
           <n-input
             id="password"
+            ref="passwordRef"
             v-model:value="password"
             type="password"
             size="large"
             placeholder="输入访问密码"
             :show-password-on="'click'"
-            :input-props="{ autocomplete: 'current-password', autofocus: true, 'aria-label': '访问密码' }"
+            :input-props="{ autocomplete: 'current-password', 'aria-label': '访问密码' }"
             @keyup.enter="submit"
           >
             <template #prefix><LockKeyhole :size="15" /></template>
