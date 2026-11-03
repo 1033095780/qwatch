@@ -9,23 +9,29 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
 import math
 import os
 import re
 import secrets
 import sqlite3
+import threading
+import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
+from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .db import DB_PATH, connect, dumps, get_setting, init_db, iso_now, loads, set_setting
@@ -35,6 +41,7 @@ DIST = ROOT / "frontend" / "dist"
 PASSWORD = os.environ.get("QWATCH_PASSWORD", "qwatch")
 SESSION_HOURS = 12
 HEARTBEAT_TIMEOUT_S = 60
+CST = timezone(timedelta(hours=8))
 
 PLATFORM_LABELS = {"ptrade": "PTrade", "qmt": "QMT", "myquant": "掘金", "tqsdk": "天勤", "custom": "自研"}
 STRATEGY_TYPE_LABELS = {
@@ -107,6 +114,41 @@ def parse_iso(value: str) -> str:
     return ts.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def require_number(value: Any, field: str, *, minimum: float | None = None) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise HTTPException(status_code=400, detail=field + " 必须是数字")
+    number = float(value)
+    if not math.isfinite(number):
+        raise HTTPException(status_code=400, detail=field + " 必须是有限数字")
+    if minimum is not None and number < minimum:
+        raise HTTPException(status_code=400, detail=field + " 不能小于 " + str(minimum))
+    return number
+
+
+def touch_report_heartbeat(authorization: str | None) -> None:
+    """report 校验失败/回滚后，仍单独提交一次心跳。"""
+    if not authorization or not authorization.startswith("Bearer "):
+        return
+    try:
+        with connect() as conn:
+            hashed = token_hash(authorization[7:].strip())
+            token = conn.execute("SELECT * FROM tokens WHERE token_hash = ? AND status = 'active'", (hashed,)).fetchone()
+            if not token:
+                return
+            runner = conn.execute("SELECT * FROM runners WHERE id = ?", (token["runner_id"],)).fetchone()
+            if not runner:
+                return
+            now = iso_now()
+            conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?", (now, token["id"]))
+            conn.execute("UPDATE runners SET last_seen = ?, status = 'running', demo = 0 WHERE id = ?", (now, runner["id"]))
+            conn.execute(
+                "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
+                (now, now, runner["id"]),
+            )
+    except Exception:
+        pass
+
+
 # ---------- 鉴权 ----------
 
 def require_user(authorization: str | None = Header(default=None)) -> str:
@@ -143,6 +185,18 @@ def accounts_of(conn: sqlite3.Connection, row: sqlite3.Row) -> list[dict[str, An
     rows = conn.execute("SELECT id, name, venue FROM accounts WHERE id IN (" + placeholders + ")", ids).fetchall()
     by_id = {item["id"]: {"id": item["id"], "name": item["name"], "venue": item["venue"]} for item in rows}
     return [by_id[i] for i in ids if i in by_id]
+
+
+def net_cash_flow(conn: sqlite3.Connection, runner_id: str) -> float:
+    """首次权益快照之后的净入金（入金正、出金负）。"""
+    first = conn.execute("SELECT MIN(ts) AS ts FROM equity_points WHERE runner_id = ?", (runner_id,)).fetchone()["ts"]
+    if not first:
+        return 0.0
+    row = conn.execute(
+        "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts >= ?",
+        (runner_id, first),
+    ).fetchone()
+    return float(row["amount"] or 0)
 
 
 def sparkline_of(conn: sqlite3.Connection, runner_id: str) -> list[float]:
@@ -195,7 +249,8 @@ def series_analytics(values: list[float]) -> dict[str, float]:
 def runner_analytics(conn: sqlite3.Connection, runner_id: str) -> dict[str, float]:
     """按日收盘权益计算风险指标，避免盘中高频点把年化指标放大。"""
     rows = conn.execute(
-        "SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 5000", (runner_id,)
+        "SELECT ts, equity FROM (SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 5000) ORDER BY ts",
+        (runner_id,),
     ).fetchall()
     by_day: dict[str, float] = {}
     for row in rows:
@@ -235,7 +290,10 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
             "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (row["id"],)
         ).fetchone()
         initial = float(first["equity"]) if first else 0.0
-    total_pnl = equity - initial if initial > 0 else 0.0
+    flow = net_cash_flow(conn, row["id"])
+    total_pnl = equity - initial - flow if initial > 0 else 0.0
+    adjusted_return = (total_pnl / (initial + max(0.0, flow)) * 100) if initial > 0 else stats["total_return"]
+    display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
     return {
         "id": row["id"], "name": row["name"], "strategy": row["strategy"], "version": row["version"],
         "description": row["description"] or "",
@@ -246,7 +304,7 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "tags": loads(row["tags"], []), "status": row["status"], "accounts": accounts_of(conn, row),
         "equity": f"{equity:.2f}", "today_pnl": f"{today:.2f}",
         "today_pnl_pct": f"{(today / base * 100) if base else 0:.2f}",
-        "total_return_pct": f"{stats['total_return']:.2f}",
+        "total_return_pct": f"{display_return:.2f}",
         "total_pnl": f"{total_pnl:.2f}",
         "max_drawdown_pct": f"{stats['max_drawdown']:.2f}",
         "sharpe": f"{stats['sharpe']:.2f}",
@@ -347,6 +405,48 @@ def settings_view(conn: sqlite3.Connection) -> dict[str, Any]:
     }
 
 
+def _send_dingtalk(channels: list[dict[str, Any]], text: str) -> None:
+    for channel in channels:
+        url = channel["webhook"]
+        secret = channel["secret"]
+        if not url or "demo-" in url:
+            continue
+        if secret.startswith("SEC"):
+            timestamp = str(int(time.time() * 1000))
+            digest = hmac.new(secret.encode("utf-8"), (timestamp + "\n" + secret).encode("utf-8"), hashlib.sha256).digest()
+            sign = urllib.parse.quote_plus(base64.b64encode(digest))
+            url += ("&" if "?" in url else "?") + "timestamp=" + timestamp + "&sign=" + sign
+        payload: dict[str, Any] = {"msgtype": "text", "text": {"content": text}}
+        mobiles = channel.get("mobiles") or []
+        if mobiles:
+            payload["at"] = {"atMobiles": mobiles, "isAtAll": False}
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(request, timeout=5).read()
+        except Exception:
+            pass
+
+
+def notify_alert(text: str) -> None:
+    """告警落库后异步推送钉钉；演示渠道（demo-）跳过，避免本地测试出网。"""
+    try:
+        with connect() as conn:
+            channels = [
+                {"webhook": row["webhook"], "secret": row["secret"], "mobiles": loads(row["at_mobiles"], [])}
+                for row in conn.execute("SELECT * FROM channels WHERE enabled = 1").fetchall()
+            ]
+    except Exception:
+        return
+    if not channels:
+        return
+    threading.Thread(target=_send_dingtalk, args=(channels, "【qwatch P0 告警】" + text), daemon=True).start()
+
+
 # ---------- 应用 ----------
 
 app = FastAPI(title="qwatch", version="0.1.0")
@@ -358,6 +458,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 init_db()
+LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+LOGIN_LOCK = threading.Lock()
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # 设计约定：通过策略 token 鉴权的 /report 即使字段 400，也要刷新心跳。
+    if request.url.path == "/api/v1/report" and exc.status_code != 401:
+        touch_report_heartbeat(request.headers.get("authorization"))
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/healthz")
@@ -366,9 +476,21 @@ def healthz() -> dict[str, Any]:
 
 
 @app.post("/api/v1/auth/login")
-def login(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+def login(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    with LOGIN_LOCK:
+        attempts = LOGIN_ATTEMPTS[ip]
+        while attempts and now - attempts[0] > 60:
+            attempts.popleft()
+        if len(attempts) >= 5:
+            raise HTTPException(status_code=429, detail="登录尝试过多，请稍后再试")
     if str(payload.get("password", "")) != PASSWORD:
+        with LOGIN_LOCK:
+            LOGIN_ATTEMPTS[ip].append(now)
         raise HTTPException(status_code=401, detail="密码错误")
+    with LOGIN_LOCK:
+        LOGIN_ATTEMPTS.pop(ip, None)
     token = secrets.token_urlsafe(32)
     expires = (now_dt() + timedelta(hours=SESSION_HOURS)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     with connect() as conn:
@@ -505,11 +627,14 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
                 "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1", (runner_id,)
             ).fetchone()
             initial_basis = float(first_point["equity"]) if first_point else 0.0
-        total_pnl = float(row["equity"]) - initial_basis if initial_basis > 0 else 0.0
+        flow = net_cash_flow(conn, runner_id)
+        total_pnl = float(row["equity"]) - initial_basis - flow if initial_basis > 0 else 0.0
+        adjusted_return = (total_pnl / (initial_basis + max(0.0, flow)) * 100) if initial_basis > 0 else stats["total_return"]
+        display_return = adjusted_return if abs(flow) > 0.005 else stats["total_return"]
         return {
             "runner": runner_view(conn, row), "range": range_key,
             "metrics": {
-                "total_return_pct": f"{stats['total_return']:.2f}",
+                "total_return_pct": f"{display_return:.2f}",
                 "total_pnl": f"{total_pnl:.2f}",
                 "annualized_return_pct": f"{stats['annualized_return']:.2f}",
                 "today_pnl": f"{float(row['today_pnl']):.2f}",
@@ -546,7 +671,7 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
         # 组合曲线按日收盘聚合：盘中高频点不会把夏普/年化指标放大。
         point_rows = conn.execute(
-            "SELECT runner_id, ts, equity FROM equity_points ORDER BY ts LIMIT 5000"
+            "SELECT runner_id, ts, equity FROM (SELECT runner_id, ts, equity FROM equity_points ORDER BY ts DESC LIMIT 5000) ORDER BY ts"
         ).fetchall()
         latest: dict[str, float] = {}
         by_day: dict[str, float] = {}
@@ -573,7 +698,7 @@ def overview(range_key: str = Query(default="all", alias="range"), user: str = D
             benchmark.append({"ts": point["ts"], "value": f"{value:.2f}"})
         recent = conn.execute("SELECT * FROM signals ORDER BY ts DESC LIMIT 8").fetchall()
         alert_rows = conn.execute(
-            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status != 'resolved' ORDER BY a.starts_at DESC LIMIT 4"
+            "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.status = 'firing' ORDER BY a.starts_at DESC LIMIT 4"
         ).fetchall()
         return {
             "as_of": iso_now(), "total_equity": f"{total:.2f}", "today_pnl": f"{today:.2f}",
@@ -635,9 +760,11 @@ def signals_list(
             "SELECT s.* FROM signals s JOIN runners r ON r.id = s.runner_id" + clause + " ORDER BY s.ts DESC LIMIT ? OFFSET ?",
             params + [limit, cursor],
         ).fetchall()
+        next_cursor = cursor + len(rows)
         return {
             "items": [signal_view(conn, row) for row in rows], "total": total,
-            "sum_amount": f"{float(sum_amount):.2f}", "limit": limit, "next_cursor": None,
+            "sum_amount": f"{float(sum_amount):.2f}", "limit": limit,
+            "next_cursor": str(next_cursor) if next_cursor < total else None,
         }
 
 
@@ -653,6 +780,8 @@ def ack_alert(alert_id: str, user: str = Depends(require_user)) -> dict[str, Any
         row = conn.execute("SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.id = ?", (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="告警不存在")
+        if row["status"] != "firing":
+            raise HTTPException(status_code=409, detail="只有触发中的告警可以确认")
         conn.execute("UPDATE alerts SET status = 'acknowledged', acked_at = ?, updated_at = ? WHERE id = ?", (iso_now(), iso_now(), alert_id))
         updated = conn.execute("SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.id = ?", (alert_id,)).fetchone()
         return {"alert": alert_view(updated)}
@@ -661,12 +790,16 @@ def ack_alert(alert_id: str, user: str = Depends(require_user)) -> dict[str, Any
 @app.post("/api/v1/alerts/{alert_id}/silence")
 def silence_alert(alert_id: str, payload: dict[str, Any] = Body(default={}), user: str = Depends(require_user)) -> dict[str, Any]:
     duration = str(payload.get("duration", "1h"))
-    hours = {"1h": 1, "4h": 4, "24h": 24}.get(duration, 1)
+    if duration not in {"1h", "4h", "24h"}:
+        raise HTTPException(status_code=400, detail="duration 必须是 1h / 4h / 24h")
+    hours = {"1h": 1, "4h": 4, "24h": 24}[duration]
     until = (now_dt() + timedelta(hours=hours)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     with connect() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="告警不存在")
+        if row["status"] == "resolved":
+            raise HTTPException(status_code=409, detail="已恢复的告警不能静默")
         labels = loads(row["labels"], {})
         labels["silenced_until"] = until
         conn.execute(
@@ -789,34 +922,81 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         token, runner = strategy_token(conn, authorization)
         now = iso_now()
         event_ts = parse_iso(str(payload["ts"])) if payload.get("ts") else now
+        event_dt = dt_from(event_ts)
+        if event_dt and event_dt > now_dt() + timedelta(minutes=5):
+            raise HTTPException(status_code=400, detail="ts 不能超过服务器时间 5 分钟")
         conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?", (now, token["id"]))
         conn.execute("UPDATE runners SET last_seen = ?, status = 'running', demo = 0 WHERE id = ?", (now, runner["id"]))
         conn.execute(
             "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
             (now, now, runner["id"]),
         )
+        signal_keys = ("symbol", "direction", "action", "qty", "price", "amount")
+        has_signal = any(key in payload and payload[key] not in (None, "") for key in signal_keys)
+        requested_id = str(payload.get("id") or "").strip()
+        if has_signal and requested_id:
+            existing = conn.execute("SELECT runner_id FROM signals WHERE id = ?", (requested_id,)).fetchone()
+            if existing:
+                if existing["runner_id"] != runner["id"]:
+                    raise HTTPException(status_code=409, detail="signal.id 已被其他策略使用")
+                return {"ok": True, "heartbeat": True, "signal_id": requested_id, "server_time": now}
         if payload.get("msg"):
             conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (str(payload["msg"])[:200], runner["id"]))
-        if isinstance(payload.get("equity"), (int, float)) and math.isfinite(float(payload["equity"])):
-            equity = float(payload["equity"])
+        cash_flow_value: float | None = None
+        if "cash_flow" in payload and payload["cash_flow"] is not None:
+            cash_flow_value = require_number(payload["cash_flow"], "cash_flow")
+            if "equity" not in payload or payload["equity"] is None:
+                raise HTTPException(status_code=400, detail="cash_flow 必须和新的 equity 一起上报")
+        equity_value: float | None = None
+        if "equity" in payload and payload["equity"] is not None:
+            equity_value = require_number(payload["equity"], "equity", minimum=0)
+        if cash_flow_value is not None and abs(cash_flow_value) > 1e-9:
+            conn.execute(
+                "INSERT INTO cash_flows(runner_id, ts, amount, note) VALUES(?,?,?,?)",
+                (runner["id"], event_ts, cash_flow_value, "external"),
+            )
+        if equity_value is not None:
+            equity = equity_value
+            latest_point = conn.execute(
+                "SELECT ts FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 1",
+                (runner["id"],),
+            ).fetchone()
+            if latest_point and event_ts < latest_point["ts"]:
+                raise HTTPException(status_code=400, detail="equity.ts 早于该策略最新权益快照")
             if float(runner["initial_equity"] or 0) <= 0 and equity > 0:
                 first_point = conn.execute(
                     "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
                     (runner["id"],),
                 ).fetchone()
-                baseline = float(first_point["equity"]) if first_point else equity
+                baseline = float(first_point["equity"]) if first_point else (equity - (cash_flow_value or 0))
                 conn.execute("UPDATE runners SET initial_equity = ? WHERE id = ?", (baseline, runner["id"]))
-            day_start = event_ts[:10] + "T00:00:00Z"
+            event_dt_parsed = dt_from(event_ts) or now_dt()
+            local_midnight = event_dt_parsed.astimezone(CST).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_start = local_midnight.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
             prior = conn.execute(
                 "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
                 (runner["id"], day_start),
             ).fetchone()
-            today_pnl = (equity - float(prior["equity"])) if prior else 0.0
+            day_flow = conn.execute(
+                "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND ts >= ? AND ts <= ?",
+                (runner["id"], day_start, event_ts),
+            ).fetchone()["amount"]
+            if prior:
+                today_pnl = equity - float(prior["equity"]) - float(day_flow or 0)
+            else:
+                initial_ref = float(runner["initial_equity"] or 0)
+                if initial_ref <= 0:
+                    first_snapshot = conn.execute(
+                        "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
+                        (runner["id"],),
+                    ).fetchone()
+                    initial_ref = float(first_snapshot["equity"]) if first_snapshot else equity
+                today_pnl = equity - initial_ref - float(day_flow or 0)
             conn.execute("UPDATE runners SET equity = ?, today_pnl = ? WHERE id = ?", (equity, today_pnl, runner["id"]))
             conn.execute("INSERT INTO equity_points(runner_id, ts, equity) VALUES(?,?,?)", (runner["id"], event_ts, equity))
 
-        if isinstance(payload.get("loop"), (int, float)):
-            loop = int(payload["loop"])
+        if "loop" in payload and payload["loop"] is not None:
+            loop = int(require_number(payload["loop"], "loop", minimum=0))
             if runner["last_loop"] == loop:
                 same = int(runner["loop_same"]) + 1
             else:
@@ -833,43 +1013,40 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                      "策略卡死：" + runner["name"] + " 的 loop 连续 " + str(same) + " 次未增长（当前 loop=" + str(loop) + "）",
                      now, dumps({"host": "runner", "loop": str(loop)}), now),
                 )
+                notify_alert("策略卡死：" + runner["name"] + "，loop 连续 " + str(same) + " 次未增长")
             elif same < 3 and existing:
                 conn.execute("UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE id = ?", (now, now, existing["id"]))
-        if payload.get("last_tick"):
-            try:
-                tick_ts = parse_iso(str(payload["last_tick"]))
-                conn.execute("UPDATE runners SET last_tick = ? WHERE id = ?", (tick_ts, runner["id"]))
-            except HTTPException:
-                pass
+        if "last_tick" in payload and payload["last_tick"] is not None:
+            tick_ts = parse_iso(str(payload["last_tick"]))
+            conn.execute("UPDATE runners SET last_tick = ? WHERE id = ?", (tick_ts, runner["id"]))
 
-        signal_keys = ("symbol", "direction", "action", "qty", "price", "amount")
-        if not any(key in payload and payload[key] not in (None, "") for key in signal_keys):
+        if not has_signal:
             return {"ok": True, "heartbeat": True, "signal_id": None, "server_time": iso_now()}
 
         symbol = str(payload.get("symbol") or "").strip()
         direction = str(payload.get("direction") or "").strip().lower()
         action = str(payload.get("action") or "").strip().lower()
-        try:
-            qty = float(payload.get("qty"))
-        except (TypeError, ValueError):
-            qty = 0
+        qty = require_number(payload.get("qty"), "signal.qty")
+        if qty <= 0:
+            raise HTTPException(status_code=400, detail="signal.qty 必须是正数")
         if not symbol:
             raise HTTPException(status_code=400, detail="signal.symbol 必填")
         if direction not in DIRECTIONS:
             raise HTTPException(status_code=400, detail="signal.direction 必须是 long / short")
         if action not in ACTIONS:
             raise HTTPException(status_code=400, detail="signal.action 必须是 open / close / add / reduce")
-        if not math.isfinite(qty) or qty <= 0:
-            raise HTTPException(status_code=400, detail="signal.qty 必须是正数")
 
-        signal_id = str(payload.get("id") or "").strip() or ("sig_" + uuid.uuid4().hex)
-        if conn.execute("SELECT 1 FROM signals WHERE id = ?", (signal_id,)).fetchone():
-            return {"ok": True, "heartbeat": True, "signal_id": signal_id, "server_time": iso_now()}
-
+        signal_id = requested_id or ("sig_" + uuid.uuid4().hex)
+        price: float | None = None
+        if payload.get("price") is not None:
+            price = require_number(payload["price"], "signal.price", minimum=0)
+        amount: float | None = None
+        if payload.get("amount") is not None:
+            amount = require_number(payload["amount"], "signal.amount", minimum=0)
         code = symbol.split(":")[-1]
         name, market, venue, mult = INSTRUMENTS.get(code, (code, runner["market"], runner["venue"], 1))
-        price = float(payload["price"]) if isinstance(payload.get("price"), (int, float)) else None
-        amount = float(payload["amount"]) if isinstance(payload.get("amount"), (int, float)) else ((price or 0) * qty * mult)
+        if amount is None:
+            amount = (price or 0) * qty * mult
         side = "buy" if (direction == "long") == (action in ("open", "add")) else "sell"
         account_ids = loads(runner["accounts"], [])
         account_id = str(payload.get("account") or "").strip()
@@ -879,7 +1056,7 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             """INSERT INTO signals(id,ts,runner_id,direction,side,action,instrument,instrument_name,market,venue,
                account_id,price,qty,amount,status,msg) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (signal_id, event_ts, runner["id"], direction, side, action, code, name, market, venue, account_id,
-             price, qty, amount, "pending", str(payload.get("msg") or "")[:200]),
+             price, qty, amount, "received", str(payload.get("msg") or "")[:200]),
         )
         return {"ok": True, "heartbeat": True, "signal_id": signal_id, "server_time": iso_now()}
 
@@ -910,6 +1087,7 @@ async def watchdog_loop() -> None:
                             (alert_id(), fingerprint("heartbeat_lost", runner["id"]), "heartbeat_lost", "P0", "firing", runner["id"],
                              "策略心跳丢失：" + runner["name"] + " 已超过 60 秒未上报", starts, dumps({"timeout_s": "60"}), starts),
                         )
+                        notify_alert("策略心跳丢失：" + runner["name"] + " 已超过 60 秒未上报")
         except Exception:
             pass
         await asyncio.sleep(5)
@@ -932,7 +1110,10 @@ if DIST.exists():
     def spa(full_path: str):
         if full_path.startswith("api/"):
             raise HTTPException(status_code=404, detail="Not Found")
-        candidate = DIST / full_path
+        base = DIST.resolve()
+        candidate = (DIST / full_path).resolve()
+        if full_path and not candidate.is_relative_to(base):
+            raise HTTPException(status_code=404, detail="Not Found")
         if full_path and candidate.is_file():
             return FileResponse(candidate)
         index = DIST / "index.html"

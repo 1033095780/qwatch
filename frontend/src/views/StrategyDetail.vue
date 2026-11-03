@@ -21,7 +21,6 @@ import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import SideTag from '@/components/SideTag.vue';
-import SignalStatusTag from '@/components/SignalStatusTag.vue';
 import StrategyTokenModal from '@/components/StrategyTokenModal.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import MarketTag from '@/components/MarketTag.vue';
@@ -191,7 +190,7 @@ onMounted(() => load(true));
               <thead>
                 <tr>
                   <th>时间</th><th>品种</th><th>方向</th><th>动作</th>
-                  <th class="th-num">数量</th><th class="th-num">参考价</th><th class="th-num">金额</th><th>状态</th>
+                  <th class="th-num">数量</th><th class="th-num">参考价</th><th class="th-num">金额</th>
                 </tr>
               </thead>
               <tbody>
@@ -203,7 +202,6 @@ onMounted(() => load(true));
                   <td class="td-num">{{ signal.qty }}</td>
                   <td class="td-num">{{ signal.price }}</td>
                   <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
-                  <td><SignalStatusTag :status="signal.status" /></td>
                 </tr>
               </tbody>
             </table>

@@ -64,6 +64,14 @@ CREATE TABLE IF NOT EXISTS equity_points (
   equity REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_equity_runner_ts ON equity_points(runner_id, ts);
+CREATE TABLE IF NOT EXISTS cash_flows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  runner_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  amount REAL NOT NULL,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_cash_flows_runner_ts ON cash_flows(runner_id, ts);
 CREATE TABLE IF NOT EXISTS tokens (
   id TEXT PRIMARY KEY,
   runner_id TEXT,

@@ -41,7 +41,7 @@ const lastNav = computed(() => {
   return points.length ? Number(points[points.length - 1].nav ?? 0).toFixed(4) : null;
 });
 
-const activeAlertCount = computed(() => data.value?.alerts?.length ?? 0);
+const activeAlertCount = computed(() => data.value?.active_alerts ?? 0);
 
 const periodReturn = computed(() => {
   const curve = chartPoints.value;

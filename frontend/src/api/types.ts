@@ -7,7 +7,6 @@ export type Severity = 'P0' | 'P1' | 'P2';
 export type AlertStatus = 'firing' | 'acknowledged' | 'resolved';
 export type SignalSide = 'buy' | 'sell';
 export type SignalAction = 'open' | 'close' | 'add' | 'reduce';
-export type SignalStatus = 'filled' | 'pending' | 'ignored';
 export type RangeKey = '1d' | '1w' | '1m' | '3m' | '1y' | 'all';
 export type UpColorScheme = 'red_up' | 'green_up';
 
@@ -88,7 +87,6 @@ export interface Signal {
   price: string;
   qty: string;
   amount: string;
-  status: SignalStatus;
   tags: string[];
 }
 

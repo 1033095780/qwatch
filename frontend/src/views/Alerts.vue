@@ -178,7 +178,6 @@ onMounted(() => load(true));
             <div class="head-left">
               <SeverityTag severity="P0" />
               <span class="rule">{{ RULE_LABEL[alert.rule] ?? alert.rule }}</span>
-              <span class="rule-key mono">{{ alert.rule }}</span>
               <span class="status-chip" :class="alert.status">{{ STATUS_LABEL[alert.status] }}</span>
             </div>
             <div class="head-right">

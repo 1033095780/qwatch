@@ -5,7 +5,7 @@ import { useRoute } from 'vue-router';
 import { NButton, NDatePicker, NInput, NSelect, useMessage } from 'naive-ui';
 import { ArrowDown, ArrowUp, Download, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Runner, Signal, SignalStatus } from '@/api/types';
+import type { Runner, Signal } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
 import { fmtDate, fmtDateTime, fmtMoney } from '@/utils/format';
@@ -13,7 +13,6 @@ import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SideTag from '@/components/SideTag.vue';
-import SignalStatusTag from '@/components/SignalStatusTag.vue';
 
 type SortKey = 'ts' | 'qty' | 'price' | 'amount';
 
@@ -41,7 +40,6 @@ const filters = reactive({
   platform: '',
   market: '',
   side: '',
-  status: '',
   instrument: '',
 });
 
@@ -60,12 +58,6 @@ const marketOptions = computed(() => {
   return withAll('全部市场', [...seen].map(([value, label]) => ({ value, label })));
 });
 const sideOptions = withAll('全部方向', [{ label: '买入', value: 'buy' }, { label: '卖出', value: 'sell' }]);
-const statusOptions: { label: string; value: '' | SignalStatus }[] = [
-  { label: '全部状态', value: '' },
-  { label: '已执行', value: 'filled' },
-  { label: '待执行', value: 'pending' },
-  { label: '已忽略', value: 'ignored' },
-];
 const sortedItems = computed(() => {
   const dir = sortDir.value === 'asc' ? 1 : -1;
   return [...items.value].sort((a, b) => {
@@ -93,20 +85,23 @@ async function load(): Promise<void> {
       platform: filters.platform || undefined,
       market: filters.market || undefined,
       side: filters.side || undefined,
-      status: filters.status || undefined,
       instrument: filters.instrument.trim() || undefined,
       from: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[0])).toISOString() : undefined,
       to: dateRange.value ? new Date(shanghaiDayStart(dateRange.value[1]) + DAY - 1).toISOString() : undefined,
-      limit: 200,
-      cursor: 0,
     };
-    const [signalsRes, runnersRes] = await Promise.all([
-      api.signals(query),
-      runners.value.length ? Promise.resolve({ items: runners.value }) : api.runners(),
-    ]);
-    items.value = signalsRes.items;
-    total.value = signalsRes.total;
-    sumAmount.value = signalsRes.sum_amount;
+    const runnersPromise = runners.value.length ? Promise.resolve({ items: runners.value }) : api.runners();
+    const all: Signal[] = [];
+    let cursor = 0;
+    let lastRes: Awaited<ReturnType<typeof api.signals>> | null = null;
+    do {
+      lastRes = await api.signals({ ...query, limit: 500, cursor });
+      all.push(...lastRes.items);
+      cursor = Number(lastRes.next_cursor || 0);
+    } while (lastRes.next_cursor);
+    const runnersRes = await runnersPromise;
+    items.value = all;
+    total.value = lastRes.total;
+    sumAmount.value = lastRes.sum_amount;
     runners.value = runnersRes.items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '信号加载失败';
@@ -149,13 +144,12 @@ function exportCsv(): void {
     message.warning('当前筛选条件下没有可导出的信号');
     return;
   }
-  const header = ['时间(Asia/Shanghai)', '信号ID', '策略', '平台', '市场', '品种', '品种名称', '方向', '动作', '数量', '参考价', '金额', '状态', '标签'];
+  const header = ['时间(Asia/Shanghai)', '信号ID', '策略', '平台', '市场', '品种', '品种名称', '方向', '动作', '数量', '参考价', '金额', '备注'];
   const rows = sortedItems.value.map((s) => [
     fmtDateTime(s.ts), s.id, s.runner_name, s.platform_label, s.market_label, s.instrument, s.instrument_name,
     s.side === 'buy' ? '买入' : '卖出', SIGNAL_ACTION_LABELS[s.action],
     s.qty, s.price, s.amount,
-    s.status === 'filled' ? '已执行' : s.status === 'pending' ? '待执行' : '已忽略',
-    s.tags.join(' / '),
+    s.msg || '',
   ]);
   const csv = '\uFEFF' + [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -171,7 +165,7 @@ function exportCsv(): void {
 }
 
 watch(
-  () => [filters.runnerId, filters.platform, filters.market, filters.side, filters.status, filters.instrument, dateRange.value],
+  () => [filters.runnerId, filters.platform, filters.market, filters.side, filters.instrument, dateRange.value],
   scheduleLoad,
   { deep: true },
 );
@@ -194,7 +188,7 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 
 <template>
   <div class="page">
-    <PageHeader title="交易信号" subtitle="跨策略 / 平台 / 市场 / 方向 / 状态的信号流水 · Asia/Shanghai">
+    <PageHeader title="交易信号" subtitle="跨策略 / 平台 / 市场 / 方向的信号流水 · Asia/Shanghai">
       <template #extra>
         <n-button size="small" @click="exportCsv">
           <template #icon><Download :size="14" /></template>
@@ -209,7 +203,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
         <n-select v-model:value="filters.platform" :options="platformOptions" size="small" class="f-select-sm" />
         <n-select v-model:value="filters.market" :options="marketOptions" size="small" class="f-select-sm" />
         <n-select v-model:value="filters.side" :options="sideOptions" size="small" class="f-select-xs" />
-        <n-select v-model:value="filters.status" :options="statusOptions" size="small" class="f-select-xs" />
         <n-input v-model:value="filters.instrument" clearable placeholder="品种代码，如 rb2601" size="small" class="f-input">
           <template #prefix><Search :size="13" /></template>
         </n-input>
@@ -251,12 +244,11 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <th class="th-num sortable" @click="toggleSort('price')">参考价 <span class="sort">{{ sortIcon('price') }}</span></th>
               <th class="th-num sortable" @click="toggleSort('qty')">数量 <span class="sort">{{ sortIcon('qty') }}</span></th>
               <th class="th-num sortable" @click="toggleSort('amount')">金额 <span class="sort">{{ sortIcon('amount') }}</span></th>
-              <th>状态</th>
               <th>备注</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="signal in pageRows" :key="signal.id" :class="{ 'row-ignored': signal.status === 'ignored' }">
+            <tr v-for="signal in pageRows" :key="signal.id">
               <td class="mono nowrap" :title="signal.ts">{{ fmtDateTime(signal.ts) }}</td>
               <td class="truncate cell-strong"><router-link :to="'/strategies/' + signal.runner_id" class="cell-link">{{ signal.runner_name }}</router-link></td>
               <td class="muted nowrap">{{ signal.platform_label || '—' }}</td>
@@ -270,7 +262,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
               <td class="td-num">{{ signal.price }}</td>
               <td class="td-num">{{ signal.qty }}</td>
               <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
-              <td><SignalStatusTag :status="signal.status" /></td>
               <td class="truncate muted" :title="signal.msg || ''">{{ signal.msg || '—' }}</td>
             </tr>
           </tbody>
@@ -357,9 +348,6 @@ onBeforeUnmount(() => window.clearTimeout(debounceTimer));
 }
 .cell-link:hover {
   color: var(--primary);
-}
-.row-ignored td {
-  opacity: 0.62;
 }
 .pager {
   display: flex;

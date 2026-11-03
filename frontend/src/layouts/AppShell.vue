@@ -230,7 +230,6 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
             @click="router.push('/alerts')"
           >
             <Bell :size="17" />
-            <span v-if="alertCount > 0" class="bell-dot">{{ alertCount > 9 ? '9+' : alertCount }}</span>
           </button>
           <n-dropdown trigger="click" :options="userOptions" @select="onUserSelect">
             <button class="avatar" type="button" :aria-label="'账号：' + (auth.user?.name || 'Trader')">
