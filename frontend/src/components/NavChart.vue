@@ -18,8 +18,16 @@ const PAD_X = 10;
 const PAD_Y = 12;
 
 const values = computed(() => props.data.map((p) => Number(p.value)).filter((v) => Number.isFinite(v)));
-const min = computed(() => (values.value.length ? Math.min(...values.value) : 0));
-const max = computed(() => (values.value.length ? Math.max(...values.value) : 1));
+const rawMin = computed(() => (values.value.length ? Math.min(...values.value) : 0));
+const rawMax = computed(() => (values.value.length ? Math.max(...values.value) : 1));
+const min = computed(() => {
+  const pad = (rawMax.value - rawMin.value || Math.max(1, rawMax.value * 0.01)) * 0.08;
+  return rawMin.value - pad;
+});
+const max = computed(() => {
+  const pad = (rawMax.value - rawMin.value || Math.max(1, rawMax.value * 0.01)) * 0.08;
+  return rawMax.value + pad;
+});
 const span = computed(() => max.value - min.value || 1);
 const coords = computed(() => {
   const n = values.value.length;
@@ -41,7 +49,7 @@ const area = computed(() => {
 const hover = computed(() => (hoverIndex.value === null ? null : coords.value[hoverIndex.value] || null));
 const startLabel = computed(() => props.data.length ? fmtDateTime(props.data[0].ts) : '');
 const endLabel = computed(() => props.data.length ? fmtDateTime(props.data[props.data.length - 1].ts) : '');
-const fmtValue = (value: number): string => (props.currency ? '¥' + fmtNumber(value, 2) : fmtNumber(value, 4));
+const fmtValue = (value: number): string => (props.currency ? '¥' + fmtNumber(value, 0) : fmtNumber(value, 4));
 
 function onMove(event: MouseEvent): void {
   const svg = (event.currentTarget as SVGElement).getBoundingClientRect();

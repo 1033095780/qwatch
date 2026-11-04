@@ -1,7 +1,7 @@
-"""v0.2 基础数据：初始化数据库后写入钉钉渠道占位与配色。
+"""v0.4 基础数据：初始化数据库后写入钉钉渠道占位与配色。
 
-不再创建账户 / 交易日历 / 策略 / 进程；策略与进程由 API 创建、上报自动发现。
-运行会清空运行时数据（runners/processes/events/alerts/tokens/sessions），请先备份。
+不再创建账户 / 策略 / 进程；账户由 API 创建，策略必须选择账户，进程上报自动发现。
+运行会清空运行时数据（accounts/runners/processes/events/alerts/tokens/sessions），请先备份。
 """
 
 from __future__ import annotations
@@ -17,11 +17,11 @@ CHANNELS = [
 ]
 
 TABLES = [
+    "account_equity_points",
+    "accounts",
     "alert_deliveries",
     "alerts",
     "events",
-    "equity_points",
-    "nav_points",
     "processes",
     "runners",
     "tokens",

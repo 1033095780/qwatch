@@ -42,6 +42,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
   const lastAlertChangeAt = ref(0);
   const lastProcessChangeAt = ref(0);
   const lastEventAt = ref(0);
+  const lastAccountChangeAt = ref(0);
   const started = ref(false);
   let off: (() => void) | null = null;
 
@@ -54,6 +55,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
       lastAlertChangeAt.value = Date.now();
       return;
     }
+    if (type.indexOf('account.') === 0) {
+      lastAccountChangeAt.value = Date.now();
+      return;
+    }
     if (type === 'process.updated' || type.indexOf('process.') === 0) {
       lastProcessChangeAt.value = Date.now();
       return;
@@ -62,7 +67,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
       const e = normalizeEvent(event.data, type);
       if (!e) return;
       lastEventAt.value = Date.now();
-      events.value = [e, ...events.value].slice(0, 100);
+      events.value = [e, ...events.value].slice(0, 120);
     }
   }
 
@@ -84,5 +89,8 @@ export const useRealtimeStore = defineStore('realtime', () => {
     events.value = [];
   }
 
-  return { events, lastAlertChangeAt, lastProcessChangeAt, lastEventAt, state, live, started, start, stop, clear };
+  return {
+    events, lastAlertChangeAt, lastProcessChangeAt, lastEventAt, lastAccountChangeAt,
+    state, live, started, start, stop, clear,
+  };
 });

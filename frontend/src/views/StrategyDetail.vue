@@ -1,11 +1,11 @@
+// StrategyDetail.vue — v0.4 策略详情：无 Tab；顶部账户权益曲线 + 账户/券商；下方左侧进程+告警、右侧动态（搜索/筛选/滚动）。
 <script setup lang="ts">
-// StrategyDetail.vue — 策略详情：一页运行概览 + 动态，配置收进令牌弹窗，减少 Tab 层级。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, useDialog, useMessage } from 'naive-ui';
 import { AlertTriangle, KeyRound, Pause, Play, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Alert, Runner, RunnerDetail, RunnerEvent } from '@/api/types';
+import type { Alert, CurvePoint, Runner, RunnerDetail, RunnerEvent } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import ActivityFeed from '@/components/ActivityFeed.vue';
@@ -46,6 +46,10 @@ const ranges = [
 ] as const;
 
 const runner = computed<Runner | null>(() => detail.value?.runner ?? null);
+const account = computed(() => detail.value?.account ?? null);
+const accountName = computed(() => runner.value?.account_name || account.value?.name || '未关联账户');
+const accountBroker = computed(() => runner.value?.account_broker || account.value?.broker || '');
+const accountEquity = computed(() => account.value?.equity ?? null);
 const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
 const alerts = computed(() => detail.value?.alerts ?? []);
@@ -60,8 +64,8 @@ const filteredEvents = computed<RunnerEvent[]>(() => {
       .some((value) => String(value).toLowerCase().includes(keyword));
   });
 });
-const equityCurve = computed(() => {
-  const curve = detail.value?.equity_curve ?? [];
+const equityCurve = computed<CurvePoint[]>(() => {
+  const curve = detail.value?.account_equity_curve ?? [];
   if (!curve.length) return [];
   const cfg = ranges.find((item) => item.key === range.value);
   if (!cfg || cfg.days === 0) return curve;
@@ -91,7 +95,7 @@ function togglePause(): void {
   const paused = runner.value.status === 'paused';
   dialog.warning({
     title: paused ? '恢复监控' : '暂停监控',
-    content: paused ? '恢复后重新纳入心跳与 loop 告警判定。' : '暂停后该策略组不再产生心跳/卡死告警。',
+    content: paused ? '恢复后重新纳入心跳与 loop 告警判定。' : '暂停后该策略不再产生心跳/卡死告警。',
     positiveText: paused ? '恢复' : '暂停',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -135,7 +139,7 @@ function alertStatusText(alert: Alert): string {
 }
 
 watch(() => settings.refreshSeq, () => { void load(false); });
-watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt], scheduleReload);
+watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt, realtime.lastAccountChangeAt], scheduleReload);
 onMounted(() => {
   void load(true);
   pollTimer = window.setInterval(() => { if (!document.hidden) void load(false); }, 15000);
@@ -164,8 +168,14 @@ onBeforeUnmount(() => {
 
     <div v-if="loading && !detail" class="skel skel-card" style="height: 300px" />
     <div v-else-if="error && !detail" class="card">
-      <EmptyState title="策略加载失败" :description="error" />
-      <n-button size="small" @click="load(true)">重试</n-button>
+      <EmptyState title="策略加载失败" :description="error">
+        <template #action>
+          <div class="error-actions">
+            <n-button size="small" @click="load(true)">重新加载</n-button>
+            <n-button size="small" quaternary @click="$router.push('/strategies')">返回策略列表</n-button>
+          </div>
+        </template>
+      </EmptyState>
     </div>
 
     <template v-else-if="detail && runner">
@@ -179,9 +189,13 @@ onBeforeUnmount(() => {
 
       <section class="hero-break">
         <div class="hero-copy">
-          <span class="hero-label">策略权益</span>
-          <strong class="hero-equity mono">{{ runner.equity ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</strong>
+          <span class="hero-label">账户权益</span>
+          <strong class="hero-equity mono">{{ accountEquity !== null ? '¥' + fmtNumber(accountEquity, 0) : '—' }}</strong>
           <div class="hero-meta">
+            <router-link :to="{ path: '/strategies', query: { account_id: runner.account_id } }" class="account-link">
+              <span v-if="accountBroker && accountBroker !== accountName" class="broker-chip">{{ accountBroker }}</span>
+              <span>{{ accountName }}</span>
+            </router-link>
             <span class="meta-item"><StatusDot :status="runner.status" :size="6" />{{ runner.status === 'running' ? '运行中' : runner.status === 'paused' ? '已暂停' : runner.status === 'degraded' ? '部分异常' : '离线' }}</span>
             <span class="meta-item">{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
             <span class="meta-item">{{ runner.last_seen ? '最后心跳 ' + fromNow(runner.last_seen) : '尚未上报' }}</span>
@@ -200,7 +214,7 @@ onBeforeUnmount(() => {
         <div class="left-column">
           <section class="card block-card">
             <div class="block-head">
-              <div><h3>进程</h3><span class="block-sub">{{ runner.process_count > 1 ? runner.online_processes + ' / ' + runner.process_count + ' 在线' : '单进程运行' }}</span></div>
+              <div><h3>进程</h3><span class="block-sub">{{ runner.online_processes }}/{{ runner.process_count }} 在线 · 停用后不参与存活判定</span></div>
               <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
             </div>
             <ProcessTable
@@ -218,7 +232,7 @@ onBeforeUnmount(() => {
               <div><h3>最近告警</h3><span class="block-sub">{{ alerts.length }} 条</span></div>
               <router-link to="/alerts" class="inline-link">告警中心</router-link>
             </div>
-            <router-link v-for="alert in alerts.slice(0, 3)" :key="alert.id" to="/alerts" class="alert-line">
+            <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/alerts" class="alert-line">
               <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
               <span class="alert-text">{{ alert.summary }}</span>
               <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
@@ -252,6 +266,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.error-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
 .alert-banner { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid rgba(240, 68, 56, 0.28); border-radius: 8px; background: rgba(240, 68, 56, 0.06); color: #f47c74; font-size: 11px; }
 .banner-link { margin-left: auto; color: #f47c74; text-decoration: underline; white-space: nowrap; }
 .hero-break { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding: 4px 2px 0; }
@@ -259,6 +274,9 @@ onBeforeUnmount(() => {
 .hero-equity { display: block; margin-top: 2px; font-size: 32px; font-weight: 600; letter-spacing: -0.04em; line-height: 1.15; color: var(--text); }
 .hero-meta { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; color: var(--text-3); font-size: 10px; }
 .meta-item { display: inline-flex; align-items: center; gap: 5px; }
+.account-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 10px; }
+.account-link:hover { color: var(--primary); }
+.broker-chip { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; }
 .detail-range { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .detail-range button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
 .detail-range button.active { background: var(--primary-soft); color: var(--text); }

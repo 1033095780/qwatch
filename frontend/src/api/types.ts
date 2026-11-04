@@ -1,8 +1,7 @@
-// api/types.ts — qwatch v0.2 API 契约类型（docs/V02-CONTRACT.md）。
-// 定位：可信看门狗。策略 token = 策略组；instrument = 稳定进程名；无 PnL/净值/收益/风险/账户/日历。
+// api/types.ts — qwatch v0.4 API 契约类型（docs/V04-CONTRACT.md）。
+// 账户（券商/账户）是净值/权益来源；策略属于账户；进程属于策略。权益/净值按账户展示。
 
 export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'paused';
-/** 进程状态：与策略状态同构；retired 表示已停用（不参与存活判定） */
 export type ProcessStatus = RunnerStatus | 'retired';
 export type AlertStatus = 'firing' | 'acknowledged' | 'resolved';
 export type AlertRule = 'heartbeat_lost' | 'runner_stalled';
@@ -21,28 +20,60 @@ export interface LoginResponse {
   user: User;
 }
 
-/** GET /runners 列表项（策略组） */
+export interface CurvePoint {
+  ts: string;
+  value: string;
+}
+
+/** 账户：券商/账户层级；equity/nav 由下属任意策略进程上报更新（最后一次为准） */
+export interface Account {
+  id: string;
+  name: string;
+  broker: string;
+  description?: string;
+  equity?: string | null;
+  nav?: string | null;
+  equity_updated_at?: string | null;
+  nav_updated_at?: string | null;
+  created_at?: string | null;
+  strategy_count?: number;
+  online_strategies?: number;
+  equity_sparkline?: number[];
+}
+
+export interface AccountCreateRequest {
+  name: string;
+  broker: string;
+  description?: string;
+}
+
+export interface AccountPatch {
+  name?: string;
+  broker?: string;
+  description?: string;
+}
+
+export interface AccountDetail {
+  account: Account;
+  strategies: Runner[];
+}
+
+/** GET /runners 列表项（策略组，含所属账户信息；不返回 runner 自身权益） */
 export interface Runner {
   id: string;
   name: string;
   description: string;
   status: RunnerStatus;
-  /** 进程总数 / 在线进程数（契约字段 process_count / online_processes） */
   process_count: number;
   online_processes: number;
   last_seen: string | null;
-  last_msg: string | null;
-  nav?: string | null;
-  nav_updated_at?: string | null;
-  nav_sparkline?: number[];
-  equity?: string | null;
-  equity_updated_at?: string | null;
-  equity_sparkline?: number[];
-  /** 以下为可选的展示辅助字段，后端未提供时前端不显示 */
+  last_msg?: string | null;
+  account_id: string;
+  account_name: string;
+  account_broker: string;
   created_at?: string | null;
 }
 
-/** GET /runners/{id} 中的进程 */
 export interface ProcessInfo {
   name: string;
   status: ProcessStatus;
@@ -51,7 +82,6 @@ export interface ProcessInfo {
   retired: boolean;
 }
 
-/** GET /runners/{id} 中的动态：message + signal 合并 */
 export interface RunnerEvent {
   id: string | number;
   ts: string;
@@ -74,7 +104,6 @@ export interface Alert {
   status: AlertStatus;
   runner_id: string;
   runner_name: string;
-  /** 摘要列出进程名（heartbeat_lost / runner_stalled 按策略组汇总一条） */
   summary: string;
   starts_at: string;
   ends_at?: string | null;
@@ -85,26 +114,28 @@ export interface Alert {
 
 export interface RunnerDetail {
   runner: Runner;
+  account: Account;
   processes: ProcessInfo[];
   events: RunnerEvent[];
   alerts: Alert[];
-  nav_curve?: { ts: string; value: string }[];
-  equity_curve?: { ts: string; value: string }[];
+  /** 该策略所属账户的权益曲线（账户级） */
+  account_equity_curve: CurvePoint[];
 }
 
 export interface Overview {
   running: number;
   total: number;
-  active_alerts: number;
   processes_total: number;
   processes_online: number;
+  active_alerts: number;
+  account_count?: number;
   total_equity?: string | null;
   today_equity_change?: string | null;
-  equity_as_of?: string | null;
-  equity_curve?: { ts: string; value: string }[];
-  recent_alerts: Alert[];
-  recent_events?: RunnerEvent[];
+  equity_curve?: CurvePoint[];
+  accounts: Account[];
   runners: Runner[];
+  recent_events?: RunnerEvent[];
+  recent_alerts: Alert[];
 }
 
 export interface ListResponse<T> {
@@ -151,6 +182,7 @@ export interface TestChannelResult {
 export interface RunnerCreateRequest {
   name: string;
   description?: string;
+  account_id: string;
 }
 
 export interface StrategyToken {
@@ -179,10 +211,7 @@ export interface TokenCreateResult {
   record: StrategyToken;
 }
 
-/** SSE 事件：GET /api/v1/stream（Authorization: Bearer） */
 export interface StreamEvent {
-  /** 契约事件名：alert.firing / alert.resolved / alert.updated / process.updated / event.message / event.signal；兼容服务端仅发 data 时由 data.type 推断 */
   type: string;
-  /** 事件原始负载（已 JSON.parse；无法解析时为字符串） */
   data: unknown;
 }

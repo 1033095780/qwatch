@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qwatch"
-version = "0.3.0"
-description = "qwatch strategy watchdog SDK — per-instrument heartbeat, messages and signals"
+version = "0.4.0"
+description = "qwatch strategy watchdog SDK — non-blocking per-instrument heartbeat, messages, signals and account equity"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "Apache-2.0" }

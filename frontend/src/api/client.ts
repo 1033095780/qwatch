@@ -1,9 +1,9 @@
-// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记（v0.2）。
+// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记（v0.4 账户层级）。
 import { reactive } from 'vue';
 import type {
-  Alert, AlertsResponse, AlertStatus, ChannelPatch, ListResponse, LoginResponse, Overview, ProcessInfo,
-  Runner, RunnerCreateRequest, RunnerDetail, SettingsData, StrategyToken, TestChannelResult, TokenCreateRequest,
-  TokenCreateResult, TokensResponse, User,
+  Account, AccountCreateRequest, AccountDetail, AccountPatch, Alert, AlertsResponse, ChannelPatch, ListResponse,
+  LoginResponse, Overview, ProcessInfo, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, StrategyToken,
+  TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -45,7 +45,7 @@ export class ApiError extends Error {
   }
 }
 
-/** 全局请求元信息：顶栏「x 秒前更新」与加载态使用 */
+/** 全局请求元信息：顶栏加载态使用 */
 export const apiMeta = reactive({ pending: 0, lastResponseAt: Date.now() });
 
 function qs(params: Record<string, string | number | undefined | null> = {}): string {
@@ -106,7 +106,19 @@ export const api = {
   overview() {
     return request<Overview>('/overview');
   },
-  runners(params: { status?: string; q?: string } = {}) {
+  accounts() {
+    return request<ListResponse<Account>>('/accounts');
+  },
+  account(id: string) {
+    return request<AccountDetail>('/accounts/' + encodeURIComponent(id));
+  },
+  createAccount(body: AccountCreateRequest) {
+    return request<{ account: Account }>('/accounts', { method: 'POST', body: JSON.stringify(body) });
+  },
+  updateAccount(id: string, body: AccountPatch) {
+    return request<{ account: Account }>('/accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(body) });
+  },
+  runners(params: { status?: string; q?: string; account_id?: string } = {}) {
     return request<ListResponse<Runner>>('/runners' + qs(params));
   },
   runner(id: string) {
