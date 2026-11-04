@@ -173,6 +173,13 @@ class Qwatch:
             raise ValueError("nav 必须大于 0")
         self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "nav": number})
 
+    def equity(self, value: float) -> None:
+        """上报策略组权益（同一 token 下任意进程可报；服务端以最后一次为准）。"""
+        number = self._number(value, "equity")
+        if number <= 0:
+            raise ValueError("equity 必须大于 0")
+        self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "equity": number})
+
     def msg(self, text: str) -> None:
         """发送一条动态消息（也算心跳）。"""
         text = str(text or "").strip()[:200]

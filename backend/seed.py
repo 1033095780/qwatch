@@ -20,6 +20,7 @@ TABLES = [
     "alert_deliveries",
     "alerts",
     "events",
+    "equity_points",
     "nav_points",
     "processes",
     "runners",

@@ -1,7 +1,7 @@
 """qwatch v0.3 后端：可信看门狗（策略组 + 进程心跳 + 策略组净值 + SSE + 钉钉 P0）。
 
 - runners = 策略组；processes = 稳定进程名（自动发现，可 retired）
-- POST /api/v1/report 只接收心跳/loop/msg/signal；拒绝 equity/pnl/nav/cash_flow
+- POST /api/v1/report 接收心跳/loop/msg/signal/nav/equity；拒绝 pnl/cash_flow
 - 告警只有 P0：heartbeat_lost / runner_stalled，按策略组汇总一条
 - GET /api/v1/stream 为 SSE 实时事件（alert.* / process.updated / event.*）
 """
@@ -223,6 +223,8 @@ def runner_view(runner, processes, statuses: dict[int, str]) -> dict[str, Any]:
         "last_msg": runner["last_msg"] or "",
         "nav": f"{float(runner['nav']):.6f}" if runner["nav"] is not None else None,
         "nav_updated_at": runner["nav_updated_at"],
+        "equity": f"{float(runner['equity']):.2f}" if runner["equity"] is not None else None,
+        "equity_updated_at": runner["equity_updated_at"],
         "created_at": runner["created_at"],
     }
 
@@ -559,6 +561,11 @@ def runner_detail(runner_id: str, user: str = Depends(require_user)) -> dict[str
             (runner_id,),
         ).fetchall()))
         nav_curve = [{"ts": row["ts"], "value": f"{float(row['nav']):.6f}"} for row in nav_rows]
+        equity_rows = list(reversed(conn.execute(
+            "SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY id DESC LIMIT 1000",
+            (runner_id,),
+        ).fetchall()))
+        equity_curve = [{"ts": row["ts"], "value": f"{float(row['equity']):.2f}"} for row in equity_rows]
         runner_data = runner_view(runner, processes, statuses)
         runner_data["nav_sparkline"] = nav_sparkline(conn, runner_id)
         return {
@@ -567,6 +574,7 @@ def runner_detail(runner_id: str, user: str = Depends(require_user)) -> dict[str
             "events": [event_view(row) for row in events],
             "alerts": [alert_view(row, runner["name"]) for row in alerts],
             "nav_curve": nav_curve,
+            "equity_curve": equity_curve,
         }
 
 
@@ -677,11 +685,11 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                                                         (process["id"],)).fetchone(), state)
 
     # 2) 拒绝 v0.1 财务字段
-    forbidden = sorted(key for key in ("equity", "pnl", "cash_flow") if key in payload)
+    forbidden = sorted(key for key in ("pnl", "cash_flow") if key in payload)
     if forbidden:
         raise HTTPException(
             status_code=400,
-            detail="字段 " + "、".join(forbidden) + " 已废弃；只接收心跳/loop/msg/signal/nav",
+            detail="字段 " + "、".join(forbidden) + " 已废弃；只接收心跳/loop/msg/signal/nav/equity",
         )
 
     # 3) 解析与校验
@@ -695,6 +703,11 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         nav_value = require_number(payload["nav"], "nav")
         if nav_value <= 0:
             raise HTTPException(status_code=400, detail="nav 必须大于 0")
+    equity_value: float | None = None
+    if payload.get("equity") is not None:
+        equity_value = require_number(payload["equity"], "equity")
+        if equity_value <= 0:
+            raise HTTPException(status_code=400, detail="equity 必须大于 0")
     signal_keys = ("symbol", "contract", "direction", "action", "qty", "price", "amount")
     has_signal = any(key in payload and payload[key] not in (None, "") for key in signal_keys)
     signal_id = ""
@@ -746,6 +759,13 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             conn.execute(
                 "INSERT INTO nav_points(runner_id, ts, nav, created_at) VALUES(?,?,?,?)",
                 (runner["id"], now, nav_value, now),
+            )
+        if equity_value is not None:
+            conn.execute("UPDATE runners SET equity = ?, equity_updated_at = ? WHERE id = ?",
+                         (equity_value, now, runner["id"]))
+            conn.execute(
+                "INSERT INTO equity_points(runner_id, ts, equity, created_at) VALUES(?,?,?,?)",
+                (runner["id"], now, equity_value, now),
             )
         if msg and not has_signal:
             cursor = conn.execute(
@@ -803,6 +823,32 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             "ORDER BY e.id DESC LIMIT 8"
         ).fetchall()
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
+        total_equity = 0.0
+        prev_equity = 0.0
+        has_equity = False
+        has_prev_equity = False
+        equity_as_of: str | None = None
+        today_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+        for runner in runner_rows:
+            if runner["equity"] is None:
+                continue
+            has_equity = True
+            total_equity += float(runner["equity"])
+            if runner["equity_updated_at"] and (equity_as_of is None or runner["equity_updated_at"] > equity_as_of):
+                equity_as_of = runner["equity_updated_at"]
+            prev = conn.execute(
+                "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY id DESC LIMIT 1",
+                (runner["id"], today_start),
+            ).fetchone()
+            if prev is None:
+                # 当天首次部署没有昨日收盘：用当天首个点做基线，避免面板显示空值
+                prev = conn.execute(
+                    "SELECT equity FROM equity_points WHERE runner_id = ? AND ts >= ? ORDER BY id ASC LIMIT 1",
+                    (runner["id"], today_start),
+                ).fetchone()
+            if prev is not None:
+                prev_equity += float(prev["equity"])
+                has_prev_equity = True
         return {
             "as_of": iso_now(),
             "running": sum(1 for view in views if view["status"] == "running"),
@@ -812,6 +858,9 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             "processes_online": processes_online,
             "recent_alerts": [alert_view(row, row["runner_name"]) for row in alert_rows],
             "recent_events": [event_view(row) for row in event_rows],
+            "total_equity": f"{total_equity:.2f}" if has_equity else None,
+            "today_equity_change": f"{total_equity - prev_equity:.2f}" if has_equity and has_prev_equity else None,
+            "equity_as_of": equity_as_of,
             "runners": views,
         }
 

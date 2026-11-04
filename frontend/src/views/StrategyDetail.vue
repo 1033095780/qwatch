@@ -9,7 +9,7 @@ import type { Alert, RunnerDetail, StrategyToken } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { ruleLabel } from '@/utils/catalog';
-import { fmtDateTime, fromNow } from '@/utils/format';
+import { fmtDateTime, fmtNumber, fromNow } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
 import EventTimeline from '@/components/EventTimeline.vue';
 import NavChart from '@/components/NavChart.vue';
@@ -46,6 +46,10 @@ const runner = computed(() => detail.value?.runner ?? null);
 const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
 const navCurve = computed(() => detail.value?.nav_curve ?? []);
+const detailMetric = ref<'nav' | 'equity'>('nav');
+const detailChartData = computed(() => (detailMetric.value === 'nav' ? navCurve.value : detail.value?.equity_curve ?? []));
+const detailChartValue = computed(() => (detailMetric.value === 'nav' ? runner.value?.nav ?? '—' : runner.value?.equity ?? '—'));
+const detailChartUpdated = computed(() => (detailMetric.value === 'nav' ? runner.value?.nav_updated_at : runner.value?.equity_updated_at));
 const alerts = computed(() => [...(detail.value?.alerts ?? [])].sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at)));
 const activeAlertCount = computed(() => alerts.value.filter((a) => a.status === 'firing').length);
 
@@ -256,17 +260,22 @@ onBeforeUnmount(() => {
           </div>
           <div class="nav-hero">
             <div class="nav-hero-main">
-              <span class="nav-hero-label">策略净值</span>
-              <strong class="nav-hero-value mono">{{ runner.nav ?? '—' }}</strong>
-              <span class="nav-hero-meta">{{ runner.nav_updated_at ? '更新于 ' + fmtDateTime(runner.nav_updated_at) : '暂无净值上报' }}</span>
+              <span class="nav-hero-label">{{ detailMetric === 'nav' ? '策略净值' : '策略权益' }}</span>
+              <strong class="nav-hero-value mono">{{ detailMetric === 'nav' ? detailChartValue : '¥' + fmtNumber(detailChartValue, 2) }}</strong>
+              <span class="nav-hero-meta">{{ detailChartUpdated ? '更新于 ' + fmtDateTime(detailChartUpdated) : '暂无上报' }}</span>
+              <div class="detail-metric-tabs">
+                <button type="button" :class="{ active: detailMetric === 'nav' }" @click="detailMetric = 'nav'">净值</button>
+                <button type="button" :class="{ active: detailMetric === 'equity' }" @click="detailMetric = 'equity'">权益</button>
+              </div>
               <span class="nav-hero-note">净值由组内进程上报，同一 token 以最后一次为准；品种不单独计算净值。</span>
             </div>
-            <NavChart :data="navCurve" :height="120" />
+            <NavChart :data="detailChartData" :height="160" />
           </div>
 
           <div class="status-grid">
             <div class="status-item"><span class="k">状态</span><span class="v"><StatusTag :status="runner.status" compact /></span></div>
             <div class="status-item"><span class="k">进程在线</span><span class="v mono">{{ runner.online_processes ?? 0 }} / {{ runner.process_count ?? 0 }}</span></div>
+            <div class="status-item"><span class="k">策略权益</span><span class="v mono">{{ runner.equity ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</span></div>
             <div class="status-item"><span class="k">最后心跳</span><span class="v mono">{{ runner.last_seen ? fmtDateTime(runner.last_seen) + '（' + fromNow(runner.last_seen) + '）' : '尚未上报' }}</span></div>
             <div class="status-item"><span class="k">最后消息</span><span class="v">{{ runner.last_msg || '—' }}</span></div>
             <div v-if="runner.status === 'paused'" class="status-item status-item--wide">
@@ -423,6 +432,30 @@ onBeforeUnmount(() => {
 .nav-hero-meta {
   font-size: 11px;
   color: var(--text-2);
+}
+.detail-metric-tabs {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.detail-metric-tabs button {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.detail-metric-tabs button.active {
+  background: var(--primary-soft);
+  color: var(--text);
 }
 .nav-hero-note {
   margin-top: 4px;

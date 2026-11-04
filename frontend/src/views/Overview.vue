@@ -3,12 +3,12 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { NButton } from 'naive-ui';
-import { Bell, ChevronRight, RefreshCw, Server, ShieldAlert, Waves } from 'lucide-vue-next';
+import { Bell, ChevronRight, RefreshCw, TrendingUp, Wallet, Waves } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Overview, RunnerDetail } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtDateTime, fromNow } from '@/utils/format';
+import { fmtDateTime, fmtNumber, fromNow } from '@/utils/format';
 import { ruleLabel } from '@/utils/catalog';
 import EmptyState from '@/components/EmptyState.vue';
 import EventTimeline from '@/components/EventTimeline.vue';
@@ -47,6 +47,9 @@ const summary = computed(() => {
     activeAlerts: ov.active_alerts ?? 0,
     processesTotal,
     processesOnline,
+    totalEquity: ov.total_equity ?? null,
+    todayEquityChange: ov.today_equity_change ?? null,
+    equityAsOf: ov.equity_as_of ?? null,
   };
 });
 
@@ -61,6 +64,22 @@ const selectedGroup = computed(() => data.value?.runners.find((runner) => runner
 const navValue = computed(() => selectedGroup.value?.nav ?? selectedDetail.value?.runner.nav ?? '—');
 const navUpdated = computed(() => selectedGroup.value?.nav_updated_at ?? selectedDetail.value?.runner.nav_updated_at ?? null);
 const navCurve = computed(() => selectedDetail.value?.nav_curve ?? []);
+const metric = ref<'nav' | 'equity'>('nav');
+const chartData = computed(() => (metric.value === 'nav' ? navCurve.value : selectedDetail.value?.equity_curve ?? []));
+const chartValue = computed(() => {
+  if (metric.value === 'nav') return selectedGroup.value?.nav ?? selectedDetail.value?.runner.nav ?? '—';
+  return selectedGroup.value?.equity ?? selectedDetail.value?.runner.equity ?? '—';
+});
+const chartUpdated = computed(() => {
+  if (metric.value === 'nav') return selectedGroup.value?.nav_updated_at ?? selectedDetail.value?.runner.nav_updated_at ?? null;
+  return selectedGroup.value?.equity_updated_at ?? selectedDetail.value?.runner.equity_updated_at ?? null;
+});
+const equityChange = computed(() => {
+  const raw = data.value?.today_equity_change;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+});
 
 async function loadGroupNav(id: string): Promise<void> {
   if (!id) return;
@@ -161,11 +180,21 @@ onBeforeUnmount(() => {
       <div class="summary-grid">
         <div class="ov-kpi">
           <div class="ov-kpi-top">
-            <span class="ov-kpi-label">策略组</span>
-            <span class="ov-kpi-icon"><Server :size="15" /></span>
+            <span class="ov-kpi-label">总权益</span>
+            <span class="ov-kpi-icon"><Wallet :size="15" /></span>
           </div>
-          <div class="ov-kpi-value">{{ summary.total }} <span class="ov-kpi-unit">组</span></div>
-          <div class="ov-kpi-foot">运行中 {{ summary.running }} 组</div>
+          <div class="ov-kpi-value equity">{{ summary.totalEquity !== null ? '¥' + fmtNumber(summary.totalEquity, 2) : '—' }}</div>
+          <div class="ov-kpi-foot">运行中 {{ summary.running }} / 共 {{ summary.total }} 个策略组</div>
+        </div>
+        <div class="ov-kpi">
+          <div class="ov-kpi-top">
+            <span class="ov-kpi-label">今日权益变动</span>
+            <span class="ov-kpi-icon"><TrendingUp :size="15" /></span>
+          </div>
+          <div class="ov-kpi-value" :class="equityChange === null ? '' : equityChange >= 0 ? 'up' : 'down'">
+            {{ equityChange === null ? '—' : (equityChange >= 0 ? '+' : '') + fmtNumber(equityChange, 2) }}
+          </div>
+          <div class="ov-kpi-foot">{{ summary.equityAsOf ? '更新于 ' + fmtDateTime(summary.equityAsOf) : '暂无权益上报' }}</div>
         </div>
         <div class="ov-kpi">
           <div class="ov-kpi-top">
@@ -174,14 +203,6 @@ onBeforeUnmount(() => {
           </div>
           <div class="ov-kpi-value">{{ summary.processesOnline }}<span class="ov-kpi-dim"> / {{ summary.processesTotal }}</span></div>
           <div class="ov-kpi-foot">在线 / 全部进程</div>
-        </div>
-        <div class="ov-kpi" :class="{ 'ov-kpi--warn': summary.abnormal > 0 }">
-          <div class="ov-kpi-top">
-            <span class="ov-kpi-label">异常策略</span>
-            <span class="ov-kpi-icon" :class="{ warn: summary.abnormal > 0 }"><ShieldAlert :size="15" /></span>
-          </div>
-          <div class="ov-kpi-value" :class="{ warn: summary.abnormal > 0 }">{{ summary.abnormal }} <span class="ov-kpi-unit">组</span></div>
-          <div class="ov-kpi-foot">{{ summary.abnormal > 0 ? '存在离线/降级/暂停策略组' : '全部策略组正常' }}</div>
         </div>
         <router-link to="/alerts" class="ov-kpi ov-kpi--link" :class="{ 'ov-kpi--danger': summary.activeAlerts > 0 }">
           <div class="ov-kpi-top">
@@ -211,12 +232,18 @@ onBeforeUnmount(() => {
         <div class="nav-panel" :class="{ dimmed: groupLoading }">
           <div class="nav-panel-head">
             <div>
-              <span class="nav-panel-label">策略组净值</span>
-              <strong class="nav-panel-value mono">{{ navValue }}</strong>
+              <span class="nav-panel-label">{{ metric === 'nav' ? '策略组净值' : '策略组权益' }}</span>
+              <strong class="nav-panel-value mono">{{ metric === 'nav' ? chartValue : '¥' + fmtNumber(chartValue, 2) }}</strong>
             </div>
-            <span class="nav-panel-meta">{{ navUpdated ? '更新于 ' + fmtDateTime(navUpdated) : '暂无净值上报' }}</span>
+            <div class="nav-panel-side">
+              <div class="metric-tabs">
+                <button type="button" :class="{ active: metric === 'nav' }" @click="metric = 'nav'">净值</button>
+                <button type="button" :class="{ active: metric === 'equity' }" @click="metric = 'equity'">权益</button>
+              </div>
+              <span class="nav-panel-meta">{{ chartUpdated ? '更新于 ' + fmtDateTime(chartUpdated) : '暂无上报' }}</span>
+            </div>
           </div>
-          <NavChart :data="navCurve" :height="220" />
+          <NavChart :data="chartData" :height="220" />
         </div>
       </SectionCard>
 
@@ -263,6 +290,36 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.metric-tabs {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.metric-tabs button {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  cursor: pointer;
+}
+.metric-tabs button.active {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+.nav-panel-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ov-kpi-value.up { color: var(--up); }
+.ov-kpi-value.down { color: var(--down); }
+.ov-kpi-value.equity { font-size: 22px; letter-spacing: -0.02em; }
+
 .nav-group-tabs {
   display: flex;
   align-items: center;

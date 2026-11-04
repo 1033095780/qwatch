@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS runners (
   last_msg TEXT,
   nav REAL,
   nav_updated_at TEXT,
+  equity REAL,
+  equity_updated_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -51,6 +53,15 @@ CREATE TABLE IF NOT EXISTS nav_points (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_nav_points_runner ON nav_points(runner_id, id);
+
+CREATE TABLE IF NOT EXISTS equity_points (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  runner_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  equity REAL NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_equity_points_runner ON equity_points(runner_id, id);
 
 CREATE TABLE IF NOT EXISTS processes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -445,7 +456,10 @@ def _migrate_legacy(conn: sqlite3.Connection, data: dict[str, list[sqlite3.Row]]
 def init_db() -> None:
     """创建/迁移数据库；旧库迁移失败会抛出异常（事务已回滚）。"""
     with connect() as conn:
-        legacy = _table_exists(conn, "runners") and "equity" in _columns(conn, "runners")
+        # v0.1 的 runners 有 equity 但没有 nav；v0.3 两者都有，不能仅凭 equity 判断，
+        # 否则每次启动都会把 v0.3 库误判为 v0.1 并重复迁移。
+        runner_columns = _columns(conn, "runners")
+        legacy = _table_exists(conn, "runners") and "equity" in runner_columns and "nav" not in runner_columns
         if legacy:
             logger.info("检测到 v0.1 旧库，开始迁移：%s", str(DB_PATH))
             try:
@@ -461,6 +475,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE runners ADD COLUMN nav REAL")
         if "nav_updated_at" not in runner_columns:
             conn.execute("ALTER TABLE runners ADD COLUMN nav_updated_at TEXT")
+        if "equity" not in runner_columns:
+            conn.execute("ALTER TABLE runners ADD COLUMN equity REAL")
+        if "equity_updated_at" not in runner_columns:
+            conn.execute("ALTER TABLE runners ADD COLUMN equity_updated_at TEXT")
         if not _table_exists(conn, "settings"):
             _exec_script(conn, SCHEMA)
         row = conn.execute("SELECT value FROM settings WHERE key = 'schema_version'").fetchone()

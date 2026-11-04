@@ -75,6 +75,7 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) void lo
       <div class="nav-main">
         <span class="nav-label">策略净值</span>
         <strong class="nav-value mono">{{ runner.nav ?? '—' }}</strong>
+        <span v-if="runner.equity" class="nav-equity">权益 ¥{{ runner.equity }}</span>
       </div>
       <NavSparkline v-if="runner.nav_sparkline && runner.nav_sparkline.length" :values="runner.nav_sparkline" />
       <span v-if="runner.nav_updated_at" class="nav-time">更新 {{ fromNow(runner.nav_updated_at) }}</span>
@@ -191,6 +192,11 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) void lo
   color: var(--text);
   font-weight: 600;
   letter-spacing: -0.02em;
+}
+.nav-equity {
+  margin-left: 4px;
+  font-size: 10px;
+  color: var(--text-3);
 }
 .nav-time {
   margin-left: auto;

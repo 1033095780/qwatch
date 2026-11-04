@@ -262,6 +262,7 @@ def _run_process(
     next_signal = time.monotonic() + rnd.uniform(*process["signal_seconds"])
     next_msg = time.monotonic() + rnd.uniform(20, 40)
     nav = 1.0
+    equity = 1_000_000.0
     next_nav = time.monotonic() + rnd.uniform(10, 20)
     try:
         while not stop.is_set():
@@ -279,9 +280,12 @@ def _run_process(
                 print(f"[{label}] 动态 {text}")
                 next_msg = now + rnd.uniform(30, 60)
             if now >= next_nav and process.get("report_nav"):
-                nav = max(0.01, nav * (1 + rnd.gauss(0.0004, 0.0015)))
+                growth = 1 + rnd.gauss(0.0004, 0.0015)
+                nav = max(0.01, nav * growth)
+                equity = max(1.0, equity * growth)
                 q.nav(round(nav, 6))
-                print(f"[{label}] 净值 {nav:.4f}")
+                q.equity(round(equity, 2))
+                print(f"[{label}] 净值 {nav:.4f} 权益 {equity:.2f}")
                 next_nav = now + rnd.uniform(20, 40)
             stop.wait(TICK_S)
     finally:
