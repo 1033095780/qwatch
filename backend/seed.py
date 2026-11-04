@@ -32,7 +32,7 @@ CALENDARS = [
     ("cffex", "金融期货 CFFEX", "Asia/Shanghai", ["09:30-11:30", "13:00-15:00"], 0, "期货节假日表（周末休市不开市）"),
 ]
 
-TABLES = ["signals", "alerts", "equity_points", "cash_flows", "tokens", "runners", "accounts",
+TABLES = ["signals", "alerts", "equity_points", "cash_flows", "messages", "instruments", "tokens", "runners", "accounts",
           "channels", "calendars", "settings", "sessions"]
 
 

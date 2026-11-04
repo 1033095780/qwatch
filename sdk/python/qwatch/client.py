@@ -52,6 +52,7 @@ class Qwatch:
         heartbeat: float = 30,
         timeout: float = 5,
         queue_size: int = 1000,
+        instrument: str = "主账户",
     ) -> None:
         if not str(base_url).startswith(("http://", "https://")):
             raise ValueError("base_url 必须以 http:// 或 https:// 开头")
@@ -62,6 +63,7 @@ class Qwatch:
 
         self._url = str(base_url).rstrip("/") + "/api/v1/report"
         self._token = str(token).strip()
+        self._instrument = str(instrument or "主账户").strip()[:64]
         self._interval = float(heartbeat)
         self._timeout = float(timeout)
         self._queue: Deque[Dict[str, Any]] = deque()
@@ -76,7 +78,7 @@ class Qwatch:
         self._stats = {"sent": 0, "failed": 0, "dropped": 0, "queued": 0}
 
         # 初始化时先同步发一次心跳：token 错立刻暴露；网络问题只记录，后台继续重试
-        ok, status, detail = self._post({"ts": _now_iso()})
+        ok, status, detail = self._post({"ts": _now_iso(), "instrument": self._instrument})
         if status == 401:
             raise AuthError("token 无效或已吊销")
         if ok:
@@ -89,6 +91,30 @@ class Qwatch:
         self._thread.start()
 
     # ---------- 对外方法 ----------
+
+    def report(
+        self,
+        equity: Optional[float] = None,
+        nav: Optional[float] = None,
+        pnl: Optional[float] = None,
+        msg: Optional[str] = None,
+        signal: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """统一上报：心跳/权益/净值/盈亏/消息/信号；instrument 与日期自动补齐。"""
+        payload: Dict[str, Any] = {"ts": _now_iso()}
+        if equity is not None:
+            payload["equity"] = self._number(equity, "equity")
+        if nav is not None:
+            payload["nav"] = self._number(nav, "nav")
+        if pnl is not None:
+            payload["pnl"] = self._number(pnl, "pnl")
+        if msg:
+            payload["msg"] = str(msg).strip()[:200]
+        if signal:
+            if not isinstance(signal, dict):
+                raise ValueError("signal 必须是 dict")
+            payload.update(signal)
+        self._enqueue(payload)
 
     def signal(
         self,
@@ -272,7 +298,7 @@ class Qwatch:
             self._stop.wait(0.2)
 
     def _heartbeat_payload(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"ts": _now_iso()}
+        payload: Dict[str, Any] = {"ts": _now_iso(), "instrument": self._instrument}
         with self._lock:
             if self._loop:
                 payload["loop"] = self._loop
@@ -299,6 +325,10 @@ class Qwatch:
         return False
 
     def _post(self, payload: Dict[str, Any]):
+        payload = dict(payload)
+        payload.setdefault("instrument", self._instrument)
+        if "pnl" in payload or "nav" in payload:
+            payload.setdefault("trade_date", datetime.now().astimezone().date().isoformat())
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             self._url,

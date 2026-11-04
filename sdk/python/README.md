@@ -14,14 +14,14 @@ pip install -e .
 ~~~python
 from qwatch import Qwatch
 
-q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", 30)  # 初始化即自动心跳
-q.signal("rb2601", "long", "open", 10, price=3521, msg="突破前高")
-q.tick()          # 主循环每轮调用一次，服务端据此判断卡死
-q.equity(462300.12, pnl=51300.12, nav=1.1236)  # pnl 累计盈亏，nav 策略净值，均由策略自己算
+q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", instrument="rb2601")
+q.tick()                              # 主循环每轮调用，服务端据此判断卡死
+q.report(nav=1.1236, pnl=51300.12)    # 净值 / 累计盈亏，均由策略自己算
+q.report(msg="夜盘暂停")               # 普通消息
 q.close()
 ~~~
 
-token 在 qwatch 后台「新建策略」时生成，一个策略一个 token。
+一个 strategy token 下可以有多个 instrument；每个脚本初始化时只填一次自己的 instrument，后续 report 不再填。日期由 SDK 自动带，服务端同时记录收到时间。
 
 ## 规则
 
@@ -36,14 +36,14 @@ token 在 qwatch 后台「新建策略」时生成，一个策略一个 token。
 ## API
 
 ~~~python
-Qwatch(base_url, token, heartbeat=30, timeout=5, queue_size=1000)
+Qwatch(base_url, token, heartbeat=30, timeout=5, queue_size=1000, instrument="主账户")
 
-q.signal(symbol, direction, action, qty, *, price=None, amount=None,
-         account=None, equity=None, pnl=None, nav=None, msg=None, id=None) -> signal_id
-q.heartbeat(*, loop=None, last_tick=None, equity=None, msg=None)
+q.report(equity=None, nav=None, pnl=None, msg=None, signal=None)
 q.tick(last_tick=None) -> loop
-q.equity(value, pnl=None, nav=None, msg=None)
-q.msg(text)
 q.stats
 q.close()
 ~~~
+
+- 不传参数 = 心跳；自动心跳每 30 秒一次。
+- instrument 与 trade_date 由 SDK 自动补齐。
+- signal 传 dict：direction / action / qty / price 等。

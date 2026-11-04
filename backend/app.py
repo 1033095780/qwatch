@@ -187,10 +187,6 @@ def touch_report_heartbeat(authorization: str | None) -> None:
                 "UPDATE runners SET last_seen = ?, status = ?, demo = 0 WHERE id = ?",
                 (now, effective_runner_status(conn, runner, now_dt()), runner["id"]),
             )
-            conn.execute(
-                "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
-                (now, now, runner["id"]),
-            )
     except Exception:
         pass
 
@@ -468,6 +464,32 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     ).fetchone()
     reported_pnl = float(latest_metric["pnl"]) if latest_metric and latest_metric["pnl"] is not None else None
     reported_nav = float(latest_metric["nav"]) if latest_metric and latest_metric["nav"] is not None else None
+    instrument_rows = conn.execute(
+        "SELECT * FROM instruments WHERE runner_id = ? ORDER BY name", (row["id"],)
+    ).fetchall()
+    now = now_dt()
+    instruments = []
+    online = 0
+    for item in instrument_rows:
+        last = dt_from(item["last_seen"])
+        stale = not last or (now - last).total_seconds() > HEARTBEAT_TIMEOUT_S
+        item_status = "offline" if stale else (item["status"] or "running")
+        if row["status"] == "paused":
+            item_status = "paused"
+        if item_status in ("running", "off_hours"):
+            online += 1
+        instruments.append({
+            "name": item["name"], "status": item_status,
+            "last_seen": item["last_seen"] or row["created_at"],
+            "equity": f"{float(item['equity']):.2f}" if item["equity"] is not None else None,
+            "pnl": f"{float(item['pnl']):.2f}" if item["pnl"] is not None else None,
+            "nav": f"{float(item['nav']):.6f}" if item["nav"] is not None else None,
+        })
+    display_status = row["status"]
+    if display_status == "running" and instruments and online < len(instruments):
+        display_status = "degraded"
+    if display_status not in ("paused", "off_hours") and instruments and online == 0:
+        display_status = "offline"
     flow = net_cash_flow(conn, row["id"])
     total_pnl = reported_pnl if reported_pnl is not None else (equity - initial - flow if initial > 0 else 0.0)
     adjusted_return = (total_pnl / (initial + max(0.0, flow)) * 100) if initial > 0 else stats["total_return"]
@@ -479,10 +501,11 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"], "name": row["name"], "strategy": row["strategy"], "version": row["version"],
         "description": row["description"] or "",
         "market": row["market"], "venue": row["venue"], "platform": row["platform"],
+        "instruments": instruments, "instrument_count": len(instruments), "online_instruments": online,
         "platform_label": PLATFORM_LABELS.get(row["platform"], row["platform"]),
         "strategy_type": row["strategy_type"],
         "strategy_type_label": STRATEGY_TYPE_LABELS.get(row["strategy_type"], row["strategy_type"]),
-        "tags": loads(row["tags"], []), "status": row["status"], "accounts": accounts_of(conn, row),
+        "tags": loads(row["tags"], []), "status": display_status, "accounts": accounts_of(conn, row),
         "equity": f"{equity:.2f}", "today_pnl": f"{today:.2f}",
         "today_pnl_pct": f"{(today / base * 100) if base else 0:.2f}",
         "total_return_pct": f"{display_return:.2f}",
@@ -494,6 +517,7 @@ def runner_view(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         "heartbeat_bars": heartbeat_bars(row["status"]),
         "uptime_24h": "99.90" if row["status"] in ("running", "off_hours") else "0.00",
         "last_heartbeat": row["last_seen"] or row["created_at"],
+        "last_msg": row["last_msg"] or "",
         "sparkline": sparkline_of(conn, row["id"]),
         "position_count": 0,
     }
@@ -812,6 +836,7 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
         if row["status"] == "offline" and last_seen:
             outages = [{"start": last_seen.isoformat(timespec="seconds").replace("+00:00", "Z"), "end": None, "duration_s": int((now - last_seen).total_seconds())}]
         signals = conn.execute("SELECT * FROM signals WHERE runner_id = ? ORDER BY ts DESC LIMIT 40", (runner_id,)).fetchall()
+        message_rows = conn.execute("SELECT * FROM messages WHERE runner_id = ? ORDER BY ts DESC LIMIT 50", (runner_id,)).fetchall()
         alert_rows = conn.execute(
             "SELECT a.*, r.name AS runner_name FROM alerts a LEFT JOIN runners r ON r.id = a.runner_id WHERE a.runner_id = ? ORDER BY a.starts_at DESC",
             (runner_id,),
@@ -849,6 +874,10 @@ def runner_detail(runner_id: str, range_key: str = Query(default="all", alias="r
             "equity": equity, "pnl_curve": pnl_curve, "nav_curve": nav_curve,
             "drawdown": drawdown, "heartbeat_timeline": timeline, "outages": outages,
             "signals": [signal_view(conn, signal) for signal in signals],
+            "messages": [
+                {"id": item["id"], "ts": item["ts"], "instrument": item["instrument"], "text": item["text"], "level": item["level"]}
+                for item in message_rows
+            ],
             "positions": [],
             "alerts": [alert_view(alert) for alert in alert_rows],
             "config": {
@@ -1265,9 +1294,15 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             "UPDATE runners SET last_seen = ?, status = ?, demo = 0 WHERE id = ?",
             (now, effective_runner_status(conn, runner, now_dt()), runner["id"]),
         )
+        instrument_name = str(payload.get("instrument") or "主账户").strip()[:64]
+        report_status = effective_runner_status(conn, runner, now_dt())
         conn.execute(
-            "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
-            (now, now, runner["id"]),
+            "INSERT OR IGNORE INTO instruments(runner_id, name, last_seen, status, updated_at) VALUES(?,?,?,?,?)",
+            (runner["id"], instrument_name, now, report_status, now),
+        )
+        conn.execute(
+            "UPDATE instruments SET last_seen = ?, status = ?, updated_at = ? WHERE runner_id = ? AND name = ?",
+            (now, report_status, now, runner["id"], instrument_name),
         )
         if "cash_flow" in payload:
             raise HTTPException(status_code=400, detail="cash_flow 已废弃，请在 qwatch 策略详情里手工记录资金变动")
@@ -1281,7 +1316,12 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                     raise HTTPException(status_code=409, detail="signal.id 已被其他策略使用")
                 return {"ok": True, "heartbeat": True, "signal_id": requested_id, "server_time": now}
         if payload.get("msg"):
-            conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (str(payload["msg"])[:200], runner["id"]))
+            text = str(payload["msg"]).strip()[:200]
+            conn.execute("UPDATE runners SET last_msg = ? WHERE id = ?", (text, runner["id"]))
+            conn.execute(
+                "INSERT INTO messages(runner_id, instrument, ts, text, level) VALUES(?,?,?,?,?)",
+                (runner["id"], instrument_name, event_ts, text, "notice"),
+            )
         equity_value: float | None = None
         if "equity" in payload and payload["equity"] is not None:
             equity_value = require_number(payload["equity"], "equity", minimum=0)
@@ -1294,85 +1334,89 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             if nav_value <= 0:
                 raise HTTPException(status_code=400, detail="nav 必须大于 0")
         if equity_value is not None or pnl_value is not None or nav_value is not None:
-            equity = equity_value if equity_value is not None else float(runner["equity"] or 0)
-            latest_point = conn.execute(
-                "SELECT ts FROM equity_points WHERE runner_id = ? ORDER BY ts DESC LIMIT 1",
-                (runner["id"],),
-            ).fetchone()
-            if latest_point and event_ts < latest_point["ts"]:
-                raise HTTPException(status_code=400, detail="数据时间早于该策略最新快照")
-            if equity_value is not None and float(runner["initial_equity"] or 0) <= 0 and equity > 0:
-                first_point = conn.execute(
-                    "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
-                    (runner["id"],),
-                ).fetchone()
-                baseline = float(first_point["equity"]) if first_point else equity
-                conn.execute("UPDATE runners SET initial_equity = ? WHERE id = ?", (baseline, runner["id"]))
+            if equity_value is not None:
+                conn.execute(
+                    "UPDATE instruments SET equity = ?, initial_equity = COALESCE(initial_equity, ?), updated_at = ? WHERE runner_id = ? AND name = ?",
+                    (equity_value, equity_value, now, runner["id"], instrument_name),
+                )
+            if pnl_value is not None:
+                conn.execute("UPDATE instruments SET pnl = ?, updated_at = ? WHERE runner_id = ? AND name = ?",
+                             (pnl_value, now, runner["id"], instrument_name))
+            if nav_value is not None:
+                conn.execute("UPDATE instruments SET nav = ?, updated_at = ? WHERE runner_id = ? AND name = ?",
+                             (nav_value, now, runner["id"], instrument_name))
+            instrument_rows = conn.execute(
+                "SELECT equity, initial_equity, pnl, nav FROM instruments WHERE runner_id = ?", (runner["id"],)
+            ).fetchall()
+            equity_values = [float(item["equity"]) for item in instrument_rows if item["equity"] is not None]
+            pnl_values = [float(item["pnl"]) for item in instrument_rows if item["pnl"] is not None]
+            nav_values = [float(item["nav"]) for item in instrument_rows if item["nav"] is not None]
+            initial_values = [float(item["initial_equity"]) for item in instrument_rows if item["initial_equity"] is not None]
+            group_equity = sum(equity_values) if equity_values else float(runner["equity"] or 0)
+            group_pnl = sum(pnl_values) if pnl_values else None
+            initial = sum(initial_values) if initial_values else float(runner["initial_equity"] or 0)
+            if initial > 0:
+                conn.execute("UPDATE runners SET initial_equity = ? WHERE id = ?", (initial, runner["id"]))
+            group_nav = (group_equity / initial) if initial > 0 and group_equity > 0 else (nav_values[-1] if nav_values else None)
             event_dt_parsed = dt_from(event_ts) or now_dt()
             local_midnight = event_dt_parsed.astimezone(CST).replace(hour=0, minute=0, second=0, microsecond=0)
             day_start = local_midnight.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-            if pnl_value is not None:
+            if group_pnl is not None:
                 prior_pnl = conn.execute(
                     "SELECT pnl FROM equity_points WHERE runner_id = ? AND pnl IS NOT NULL AND ts < ? ORDER BY ts DESC LIMIT 1",
                     (runner["id"], day_start),
                 ).fetchone()
                 if prior_pnl:
-                    today_pnl = pnl_value - float(prior_pnl["pnl"])
+                    today_pnl = group_pnl - float(prior_pnl["pnl"])
                 else:
                     first_today = conn.execute(
                         "SELECT pnl FROM equity_points WHERE runner_id = ? AND pnl IS NOT NULL AND ts >= ? ORDER BY ts LIMIT 1",
                         (runner["id"], day_start),
                     ).fetchone()
-                    today_pnl = (pnl_value - float(first_today["pnl"])) if first_today else 0.0
-                conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner["id"]))
-            elif equity_value is not None:
+                    today_pnl = (group_pnl - float(first_today["pnl"])) if first_today else 0.0
+            else:
                 prior = conn.execute(
                     "SELECT equity FROM equity_points WHERE runner_id = ? AND ts < ? ORDER BY ts DESC LIMIT 1",
                     (runner["id"], day_start),
                 ).fetchone()
-                day_flow = conn.execute(
-                    "SELECT COALESCE(SUM(amount), 0) AS amount FROM cash_flows WHERE runner_id = ? AND kind = 'flow' AND ts >= ? AND ts <= ?",
-                    (runner["id"], day_start, event_ts),
-                ).fetchone()["amount"]
                 if prior:
-                    today_pnl = equity - float(prior["equity"]) - float(day_flow or 0)
+                    today_pnl = group_equity - float(prior["equity"])
                 else:
-                    initial_ref = float(runner["initial_equity"] or 0)
-                    if initial_ref <= 0:
-                        first_snapshot = conn.execute(
-                            "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY ts LIMIT 1",
-                            (runner["id"],),
-                        ).fetchone()
-                        initial_ref = float(first_snapshot["equity"]) if first_snapshot else equity
-                    today_pnl = equity - initial_ref - float(day_flow or 0)
-                conn.execute("UPDATE runners SET today_pnl = ? WHERE id = ?", (today_pnl, runner["id"]))
-            if equity_value is not None:
-                conn.execute("UPDATE runners SET equity = ? WHERE id = ?", (equity, runner["id"]))
+                    today_pnl = group_equity - (initial or group_equity)
+            conn.execute("UPDATE runners SET equity = ?, today_pnl = ? WHERE id = ?", (group_equity, today_pnl, runner["id"]))
             conn.execute(
                 "INSERT INTO equity_points(runner_id, ts, equity, pnl, nav) VALUES(?,?,?,?,?)",
-                (runner["id"], event_ts, equity, pnl_value, nav_value),
+                (runner["id"], event_ts, group_equity, group_pnl, group_nav),
             )
 
         if "loop" in payload and payload["loop"] is not None:
             loop = int(require_number(payload["loop"], "loop", minimum=0))
-            if runner["last_loop"] == loop:
-                same = int(runner["loop_same"]) + 1
-            else:
-                same = 1
-            conn.execute("UPDATE runners SET last_loop = ?, loop_same = ? WHERE id = ?", (loop, same, runner["id"]))
+            instrument_state = conn.execute(
+                "SELECT last_loop, loop_same FROM instruments WHERE runner_id = ? AND name = ?",
+                (runner["id"], instrument_name),
+            ).fetchone()
+            same = (int(instrument_state["loop_same"]) + 1) if instrument_state and instrument_state["last_loop"] == loop else 1
+            conn.execute(
+                "UPDATE instruments SET last_loop = ?, loop_same = ?, status = ? WHERE runner_id = ? AND name = ?",
+                (loop, same, "degraded" if same >= 3 else report_status, runner["id"], instrument_name),
+            )
+            stalled = conn.execute(
+                "SELECT name, loop_same FROM instruments WHERE runner_id = ? AND loop_same >= 3", (runner["id"],)
+            ).fetchall()
             existing = conn.execute(
                 "SELECT * FROM alerts WHERE runner_id = ? AND rule = 'runner_stalled' AND status != 'resolved'", (runner["id"],)
             ).fetchone()
-            if same >= 3 and not existing:
+            if stalled and not existing:
+                names = "、".join(str(item["name"]) for item in stalled[:3])
                 conn.execute(
                     """INSERT INTO alerts(id,fingerprint,rule,severity,status,runner_id,summary,starts_at,ends_at,acked_at,labels,updated_at)
                        VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?,?)""",
                     (alert_id(), fingerprint("runner_stalled", runner["id"]), "runner_stalled", "P0", "firing", runner["id"],
-                     "策略卡死：" + runner["name"] + " 的 loop 连续 " + str(same) + " 次未增长（当前 loop=" + str(loop) + "）",
-                     now, dumps({"host": "runner", "loop": str(loop)}), now),
+                     "策略卡死：" + runner["name"] + " 的品种 " + names + " loop 连续 3 次未增长",
+                     now, dumps({"host": "runner", "instruments": names}), now),
                 )
-                notify_alert("策略卡死：" + runner["name"] + "，loop 连续 " + str(same) + " 次未增长")
-            elif same < 3 and existing:
+                notify_alert("策略卡死：" + runner["name"] + "，品种 " + names + " loop 未增长")
+            elif not stalled and existing:
                 conn.execute("UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE id = ?", (now, now, existing["id"]))
         if "last_tick" in payload and payload["last_tick"] is not None:
             tick_ts = parse_iso(str(payload["last_tick"]))
@@ -1430,6 +1474,44 @@ async def watchdog_loop() -> None:
                 ).fetchall()
                 now = now_dt()
                 for runner in runners:
+                    instrument_rows = conn.execute(
+                        "SELECT * FROM instruments WHERE runner_id = ?", (runner["id"],)
+                    ).fetchall()
+                    if instrument_rows:
+                        if not market_is_open(conn, runner, now):
+                            conn.execute("UPDATE runners SET status = 'off_hours' WHERE id = ?", (runner["id"],))
+                            conn.execute(
+                                "UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'",
+                                (iso_now(), iso_now(), runner["id"]),
+                            )
+                            continue
+                        stale = []
+                        for item in instrument_rows:
+                            last = dt_from(item["last_seen"])
+                            if not last or (now - last).total_seconds() > HEARTBEAT_TIMEOUT_S:
+                                stale.append(item["name"])
+                        existing = conn.execute(
+                            "SELECT 1 FROM alerts WHERE runner_id = ? AND rule = 'heartbeat_lost' AND status != 'resolved'", (runner["id"],)
+                        ).fetchone()
+                        if stale:
+                            conn.execute("UPDATE runners SET status = 'degraded' WHERE id = ?", (runner["id"],))
+                            if not existing:
+                                names = "、".join(stale[:5])
+                                starts = iso_now()
+                                conn.execute(
+                                    """INSERT INTO alerts(id,fingerprint,rule,severity,status,runner_id,summary,starts_at,ends_at,acked_at,labels,updated_at)
+                                       VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?,?)""",
+                                    (alert_id(), fingerprint("heartbeat_lost", runner["id"]), "heartbeat_lost", "P0", "firing", runner["id"],
+                                     "策略 " + runner["name"] + " 下 " + str(len(stale)) + " 个品种心跳丢失（" + names + "）",
+                                     starts, dumps({"timeout_s": "60", "instruments": names}), starts),
+                                )
+                                notify_alert("策略 " + runner["name"] + " 下 " + str(len(stale)) + " 个品种心跳丢失")
+                        else:
+                            conn.execute("UPDATE runners SET status = 'running' WHERE id = ?", (runner["id"],))
+                            if existing:
+                                conn.execute("UPDATE alerts SET status = 'resolved', ends_at = ?, updated_at = ? WHERE id = ?",
+                                             (iso_now(), iso_now(), existing["id"]))
+                        continue
                     last_seen = dt_from(runner["last_seen"])
                     if not last_seen:
                         continue

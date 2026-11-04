@@ -47,6 +47,7 @@ REQUEST_TIMEOUT_S = 10
 STRATEGIES: list[dict[str, Any]] = [
     {
         "name": "螺纹钢趋势",
+        "instrument": "rb2601",
         "platform": "qmt",
         "market": "CN_FUT",
         "description": "15 分钟级别黑色系趋势跟踪，夜盘连续持有。",
@@ -59,6 +60,7 @@ STRATEGIES: list[dict[str, Any]] = [
     },
     {
         "name": "股指日内",
+        "instrument": "IF2612",
         "platform": "ptrade",
         "market": "CN_FUT",
         "description": "IF 日内动量，开盘后半小时入场，收盘前平仓。",
@@ -71,6 +73,7 @@ STRATEGIES: list[dict[str, Any]] = [
     },
     {
         "name": "白银波段",
+        "instrument": "ag2601",
         "platform": "myquant",
         "market": "CN_FUT",
         "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%。",
@@ -179,9 +182,12 @@ def _backfill_history(url: str, session: str, token: str, runner: dict[str, Any]
     base = values[0]
     for index, value in enumerate(values):
         day = now - timedelta(days=179 - index)
-        ts = day.replace(hour=15, minute=0, second=0, microsecond=0).isoformat(timespec="seconds")
+        point_time = day.replace(hour=15, minute=0, second=0, microsecond=0)
+        if point_time > now:
+            point_time = now - timedelta(minutes=1)
+        ts = point_time.isoformat(timespec="seconds")
         _request(url, "POST", "/api/v1/report", {
-            "ts": ts, "equity": value,
+            "ts": ts, "equity": value, "instrument": spec["instrument"],
             "pnl": round(value - base, 2),
             "nav": round(value / base, 6),
         }, token)
@@ -264,22 +270,32 @@ def _run_strategy(spec: dict[str, Any], url: str, token: str, stop: threading.Ev
     """一个策略一个线程：每 10s tick，每 30s 自动心跳，每 15~45s 信号，定期权益。"""
     rnd = random.Random(f"{spec['name']}-{time.time_ns()}")
     try:
-        q = Qwatch(url, token, heartbeat=HEARTBEAT_S)
+        q = Qwatch(url, token, heartbeat=HEARTBEAT_S, instrument=str(spec["instrument"]))
     except AuthError as exc:
         print(f"[{spec['name']}] 令牌无效，线程退出：{exc}")
         return
 
+    extras: list[Qwatch] = []
+    for code, _price in spec["instruments"][1:]:
+        try:
+            extras.append(Qwatch(url, token, heartbeat=HEARTBEAT_S, instrument=code))
+        except AuthError:
+            pass
+
     equity = float(spec["initial_equity"])
     pnl_base = float(spec["initial_equity"]) * 0.78
-    q.equity(round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
+    q.report(equity=round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
     position: tuple[str, int] | None = None
     loops = signal_count = 0
     next_signal = time.monotonic() + rnd.uniform(*spec["signal_seconds"])
     next_equity = time.monotonic() + rnd.uniform(10, 20)
+    next_msg = time.monotonic() + rnd.uniform(20, 40)
     try:
         while not stop.is_set():
             loops += 1
             q.tick()
+            for extra in extras:
+                extra.tick()
             now = time.monotonic()
             if now >= next_signal:
                 position = _emit_signal(q, spec, position, rnd)
@@ -287,11 +303,16 @@ def _run_strategy(spec: dict[str, Any], url: str, token: str, stop: threading.Ev
                 next_signal = now + rnd.uniform(*spec["signal_seconds"])
             if now >= next_equity:
                 equity = max(1.0, equity * (1 + rnd.gauss(0, 0.001)))
-                q.equity(round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
+                q.report(equity=round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
                 next_equity = now + rnd.uniform(10, 20)
+            if now >= next_msg:
+                q.report(msg=rnd.choice(spec["messages"]))
+                next_msg = now + rnd.uniform(30, 60)
             stop.wait(TICK_S)
     finally:
         q.close()
+        for extra in extras:
+            extra.close()
         stats = q.stats
         print(f"[{spec['name']}] 已停止：loop={loops} 信号={signal_count} 上报={stats['sent']} 失败={stats['failed']}")
 

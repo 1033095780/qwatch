@@ -1,7 +1,7 @@
 // api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记。
 import { reactive } from 'vue';
 import type {
-  Alert, AlertsResponse, AlertStatus, CapitalSummary, Market, Overview, Position, RangeKey,
+  Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
   LoginResponse, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
   SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
   ListResponse,
@@ -133,20 +133,6 @@ export const api = {
   },
   resumeRunner(runnerId: string) {
     return request<{ runner: Runner }>('/runners/' + encodeURIComponent(runnerId) + '/resume', { method: 'POST' });
-  },
-  capital(runnerId: string) {
-    return request<CapitalSummary>('/runners/' + encodeURIComponent(runnerId) + '/capital');
-  },
-  addCapitalFlow(runnerId: string, body: { amount: number; note?: string; ts?: string }) {
-    return request<CapitalSummary>('/runners/' + encodeURIComponent(runnerId) + '/capital-flows', {
-      method: 'POST', body: JSON.stringify(body),
-    });
-  },
-  resetCapital(runnerId: string) {
-    return request<CapitalSummary>('/runners/' + encodeURIComponent(runnerId) + '/capital-reset', { method: 'POST' });
-  },
-  deleteCapitalFlow(runnerId: string, flowId: number) {
-    return request<CapitalSummary>('/runners/' + encodeURIComponent(runnerId) + '/capital-flows/' + flowId, { method: 'DELETE' });
   },
   positions(params: { account_id?: string } = {}) {
     return request<ListResponse<Position>>('/positions' + qs(params));

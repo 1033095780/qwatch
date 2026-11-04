@@ -3,7 +3,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { NButton, useDialog, useMessage } from 'naive-ui';
-import { ArrowUpRight, KeyRound, Pause, Play, Wallet } from 'lucide-vue-next';
+import { ArrowUpRight, KeyRound, Pause, Play } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { RangeKey, RunnerDetail } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
@@ -21,7 +21,6 @@ import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import SideTag from '@/components/SideTag.vue';
-import CapitalFlowModal from '@/components/CapitalFlowModal.vue';
 import StrategyTokenModal from '@/components/StrategyTokenModal.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import MarketTag from '@/components/MarketTag.vue';
@@ -42,7 +41,6 @@ const range = ref<RangeKey>('all');
 const chartView = ref<'pnl' | 'nav'>('pnl');
 const activeTab = ref('equity');
 const tokenOpen = ref(false);
-const capitalOpen = ref(false);
 const actionLoading = ref(false);
 
 const signedMoney = (value: string): string => {
@@ -58,6 +56,8 @@ const neverReported = computed(() => {
 
 const tabs = computed<TabItem[]>(() => [
   { key: 'equity', label: '净值' },
+  { key: 'instruments', label: '品种', count: detail.value?.runner.instruments.length ?? 0 },
+  { key: 'messages', label: '消息', count: detail.value?.messages.length ?? 0 },
   { key: 'signals', label: '信号', count: detail.value?.signals.length ?? 0 },
   { key: 'heartbeat', label: '心跳' },
   { key: 'alerts', label: '告警', count: detail.value?.alerts.length ?? 0 },
@@ -167,10 +167,6 @@ onMounted(() => load(true));
             <template #icon><KeyRound :size="13" /></template>
             接入令牌
           </n-button>
-          <n-button size="small" @click="capitalOpen = true">
-            <template #icon><Wallet :size="13" /></template>
-            资金变动
-          </n-button>
           <n-button size="small" tag="a" :href="'/signals?runner_id=' + detail.runner.id" @click.prevent="$router.push('/signals?runner_id=' + detail.runner.id)">
             <template #icon><ArrowUpRight :size="13" /></template>
             查看信号
@@ -239,6 +235,57 @@ onMounted(() => load(true));
             </div>
             <DrawdownChart :data="detail.drawdown" :height="132" />
           </div>
+        </div>
+
+        <div v-show="activeTab === 'instruments'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">品种状态</h2>
+              <p class="panel-sub">同一策略 token 下的独立脚本；净值/盈亏为各品种上报的最新值</p>
+            </div>
+          </div>
+          <div v-if="detail.runner.instruments.length" class="tbl-wrap">
+            <table class="tbl tbl--compact">
+              <thead>
+                <tr>
+                  <th>品种</th>
+                  <th>状态</th>
+                  <th>最后心跳</th>
+                  <th class="th-num">累计盈亏</th>
+                  <th class="th-num">净值</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in detail.runner.instruments" :key="item.name">
+                  <td class="mono">{{ item.name }}</td>
+                  <td><StatusTag :status="item.status" compact /></td>
+                  <td class="muted">{{ fromNow(item.last_seen) }}</td>
+                  <td class="td-num mono" :class="pnlClass(item.pnl)">
+                    {{ item.pnl === null ? '—' : signedMoney(item.pnl) }}
+                  </td>
+                  <td class="td-num mono">{{ item.nav ?? '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <EmptyState v-else compact title="还没有品种上报" description="SDK 初始化 instrument 并上报后会自动出现" />
+        </div>
+
+        <div v-show="activeTab === 'messages'" class="tab-panel">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">策略消息</h2>
+              <p class="panel-sub">普通提示，不计入 P0 告警；收到消息也会刷新心跳</p>
+            </div>
+          </div>
+          <div v-if="detail.messages.length" class="message-list">
+            <div v-for="item in detail.messages" :key="item.id" class="message-row">
+              <span class="mono message-time">{{ fmtDateTime(item.ts) }}</span>
+              <span v-if="item.instrument" class="chip chip--soft mono">{{ item.instrument }}</span>
+              <span class="message-text">{{ item.text }}</span>
+            </div>
+          </div>
+          <EmptyState v-else compact title="暂无消息" description="策略通过 report(msg=...) 发送的普通提示会显示在这里" />
         </div>
 
         <div v-show="activeTab === 'signals'" class="tab-panel">
@@ -373,12 +420,34 @@ onMounted(() => load(true));
       </section>
 
       <StrategyTokenModal v-model:show="tokenOpen" :runner="detail.runner" />
-      <CapitalFlowModal v-model:show="capitalOpen" :runner="detail.runner" @changed="load()" />
     </template>
   </div>
 </template>
 
 <style scoped>
+.message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.message-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.message-time {
+  flex: none;
+  color: var(--text-3);
+  font-size: 11px;
+}
+.message-text {
+  color: var(--text);
+  line-height: 1.6;
+}
+
 .chart-head-actions {
   display: flex;
   align-items: center;

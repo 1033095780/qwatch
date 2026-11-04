@@ -34,6 +34,15 @@ export interface RunnerCreateRequest {
   description?: string;
 }
 
+export interface InstrumentInfo {
+  name: string;
+  status: RunnerStatus;
+  last_seen: string;
+  equity: string | null;
+  pnl: string | null;
+  nav: string | null;
+}
+
 export interface Runner {
   id: string;
   name: string;
@@ -48,6 +57,9 @@ export interface Runner {
   strategy_type_label: string;
   tags: string[];
   status: RunnerStatus;
+  instruments: InstrumentInfo[];
+  instrument_count: number;
+  online_instruments: number;
   accounts: RunnerAccount[];
   equity: string;
   today_pnl: string;
@@ -61,6 +73,7 @@ export interface Runner {
   heartbeat_bars?: ('ok' | 'miss' | 'off')[];
   uptime_24h: string;
   last_heartbeat: string;
+  last_msg: string;
   sparkline: number[];
   position_count: number;
 }
@@ -104,6 +117,14 @@ export interface Alert {
   acked_at?: string | null;
   labels: Record<string, string>;
   updated_at: string;
+}
+
+export interface StrategyMessage {
+  id: number;
+  ts: string;
+  instrument: string;
+  text: string;
+  level: 'notice' | 'warning';
 }
 
 export interface EquityPoint {
@@ -205,6 +226,7 @@ export interface RunnerDetail {
   heartbeat_timeline: HeartbeatSegment[];
   outages: Outage[];
   signals: Signal[];
+  messages: StrategyMessage[];
   positions: Position[];
   alerts: Alert[];
   config: {
@@ -293,24 +315,6 @@ export interface TokenCreateRequest {
   strategy_type?: StrategyType | '';
   tags?: string[];
   note?: string;
-}
-
-export interface CapitalFlow {
-  id: number;
-  ts: string;
-  amount: string;
-  kind: 'flow' | 'reset';
-  note: string;
-}
-
-export interface CapitalSummary {
-  initial_equity: string;
-  net_flows: string;
-  pending_flows: string;
-  total_pnl: string;
-  today_pnl: string;
-  suggested_amount: string;
-  flows: CapitalFlow[];
 }
 
 export interface TokenCreateResult {

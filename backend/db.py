@@ -66,6 +66,31 @@ CREATE TABLE IF NOT EXISTS equity_points (
   nav REAL
 );
 CREATE INDEX IF NOT EXISTS idx_equity_runner_ts ON equity_points(runner_id, ts);
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  runner_id TEXT NOT NULL,
+  instrument TEXT NOT NULL DEFAULT '',
+  ts TEXT NOT NULL,
+  text TEXT NOT NULL,
+  level TEXT NOT NULL DEFAULT 'notice'
+);
+CREATE INDEX IF NOT EXISTS idx_messages_runner_ts ON messages(runner_id, ts);
+CREATE TABLE IF NOT EXISTS instruments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  runner_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  last_seen TEXT,
+  status TEXT NOT NULL DEFAULT 'offline',
+  equity REAL,
+  initial_equity REAL,
+  pnl REAL,
+  nav REAL,
+  last_loop INTEGER,
+  loop_same INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT,
+  UNIQUE(runner_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_instruments_runner ON instruments(runner_id);
 CREATE TABLE IF NOT EXISTS cash_flows (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   runner_id TEXT NOT NULL,
@@ -188,6 +213,13 @@ def init_db() -> None:
             conn.execute("ALTER TABLE equity_points ADD COLUMN pnl REAL")
         if "nav" not in equity_columns:
             conn.execute("ALTER TABLE equity_points ADD COLUMN nav REAL")
+        instrument_columns = [row["name"] for row in conn.execute("PRAGMA table_info(instruments)").fetchall()]
+        if instrument_columns and "initial_equity" not in instrument_columns:
+            conn.execute("ALTER TABLE instruments ADD COLUMN initial_equity REAL")
+        if instrument_columns and "last_loop" not in instrument_columns:
+            conn.execute("ALTER TABLE instruments ADD COLUMN last_loop INTEGER")
+        if instrument_columns and "loop_same" not in instrument_columns:
+            conn.execute("ALTER TABLE instruments ADD COLUMN loop_same INTEGER NOT NULL DEFAULT 0")
 
 
 def loads(value: str | None, default: Any) -> Any:

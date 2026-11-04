@@ -19,6 +19,7 @@ import SectionCard from '@/components/SectionCard.vue';
 import SeverityTag from '@/components/SeverityTag.vue';
 import SideTag from '@/components/SideTag.vue';
 import StatusDot from '@/components/StatusDot.vue';
+import StatusTag from '@/components/StatusTag.vue';
 
 const settings = useSettingsStore();
 
@@ -30,6 +31,7 @@ const range = ref<RangeKey>('all');
 const scope = ref<string>('portfolio');
 const chartView = ref<'pnl' | 'nav'>('pnl');
 const metricsOpen = ref(true);
+const expandedGroups = ref<Set<string>>(new Set());
 const runnerDetail = ref<RunnerDetail | null>(null);
 const scopeLoading = ref(false);
 const showDrawdown = ref(localStorage.getItem('qwatch.overview.drawdown') !== '0');
@@ -132,6 +134,13 @@ function detectNewSignal(next: Overview): void {
   clearSignalTimers();
   flashTimer = window.setTimeout(() => { flashSignalIds.value = []; }, 10000);
   bannerTimer = window.setTimeout(() => { bannerVisible.value = false; }, 10000);
+}
+
+function toggleGroup(id: string): void {
+  const next = new Set(expandedGroups.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedGroups.value = next;
 }
 
 function toggleDrawdown(): void {
@@ -372,23 +381,42 @@ onBeforeUnmount(() => {
             <router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link>
           </template>
           <div class="status-list">
-            <router-link
-              v-for="runner in data.runners"
-              :key="runner.id"
-              :to="'/strategies/' + runner.id"
-              class="status-row"
-            >
-              <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
-              <div class="status-main">
-                <span class="status-name truncate">{{ runner.name }}</span>
-                <span class="status-meta">{{ runner.description || MARKET_LABELS[runner.market] || runner.market }}</span>
-                <HeartbeatMini :bars="runner.heartbeat_bars" />
+            <div v-for="runner in data.runners" :key="runner.id" class="status-group">
+              <div class="status-row" role="link" tabindex="0" @click="$router.push('/strategies/' + runner.id)" @keydown.enter="$router.push('/strategies/' + runner.id)">
+                <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
+                <div class="status-main">
+                  <span class="status-name truncate">{{ runner.name }}</span>
+                  <span class="status-meta">
+                    {{ runner.instrument_count > 1 ? runner.online_instruments + '/' + runner.instrument_count + ' 品种在线 · ' : '' }}{{ runner.description || MARKET_LABELS[runner.market] || runner.market }}
+                  </span>
+                  <HeartbeatMini :bars="runner.heartbeat_bars" />
+                  <span v-if="runner.last_msg" class="status-msg truncate" :title="runner.last_msg">{{ runner.last_msg }}</span>
+                </div>
+                <div class="status-right">
+                  <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" />
+                  <span class="status-hb mono">{{ fromNow(runner.last_heartbeat) }}</span>
+                </div>
+                <button
+                  v-if="runner.instrument_count > 1"
+                  type="button"
+                  class="group-expand"
+                  :aria-label="expandedGroups.has(runner.id) ? '收起品种' : '展开品种'"
+                  @click.stop="toggleGroup(runner.id)"
+                >
+                  <ChevronUp v-if="expandedGroups.has(runner.id)" :size="14" />
+                  <ChevronDown v-else :size="14" />
+                </button>
               </div>
-              <div class="status-right">
-                <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" />
-                <span class="status-hb mono">{{ fromNow(runner.last_heartbeat) }}</span>
+              <div v-if="expandedGroups.has(runner.id)" class="instrument-sub">
+                <div v-for="item in runner.instruments" :key="item.name" class="instrument-row">
+                  <StatusDot :status="item.status" :size="6" />
+                  <span class="mono instrument-name">{{ item.name }}</span>
+                  <StatusTag :status="item.status" compact />
+                  <span class="instrument-pnl" :class="pnlClass(item.pnl)">{{ item.pnl === null ? '—' : '¥' + fmtMoney(item.pnl) }}</span>
+                  <span class="instrument-hb">{{ fromNow(item.last_seen) }}</span>
+                </div>
               </div>
-            </router-link>
+            </div>
           </div>
         </SectionCard>
       </div>
@@ -794,6 +822,62 @@ onBeforeUnmount(() => {
   flex-direction: column;
   margin: -4px 0;
 }
+.status-group {
+  border-bottom: 1px solid rgba(30, 38, 55, 0.65);
+}
+.status-group:last-child {
+  border-bottom: none;
+}
+.group-expand {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.group-expand:hover {
+  background: rgba(91, 140, 255, 0.1);
+  color: var(--text);
+}
+.instrument-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 4px 6px 24px;
+  padding: 6px 8px;
+  border-left: 1px solid var(--border);
+}
+.instrument-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0;
+  font-size: 11px;
+}
+.instrument-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2);
+}
+.instrument-pnl {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+.instrument-hb {
+  width: 52px;
+  text-align: right;
+  color: var(--text-3);
+  white-space: nowrap;
+}
 .status-row {
   display: flex;
   align-items: center;
@@ -824,6 +908,12 @@ onBeforeUnmount(() => {
 .status-meta {
   font-size: 10px;
   color: var(--text-3);
+}
+.status-msg {
+  max-width: 100%;
+  margin-top: 2px;
+  font-size: 10px;
+  color: #f5a524;
 }
 .status-right {
   display: flex;
