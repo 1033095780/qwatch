@@ -1,15 +1,17 @@
+// AppShell.vue — v0.2 侧栏（总览/策略/告警/设置）+ 顶栏（实时状态/刷新/告警/头像）+ 移动端抽屉。
 <script setup lang="ts">
-// AppShell.vue — 桌面侧栏（232/64）+ 顶栏（市场状态/刷新/告警/头像）+ 移动端抽屉；全局刷新信号。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NDropdown, useMessage } from 'naive-ui';
 import {
-  Activity, Bell, LayoutDashboard, LogOut, Menu, PanelLeftClose,
-  PanelLeftOpen, Radio, RefreshCw, Settings as SettingsIcon,
+  Activity, Bell, LayoutDashboard, Menu, PanelLeftClose, PanelLeftOpen,
+  RefreshCw, Settings as SettingsIcon,
 } from 'lucide-vue-next';
 import { api, apiMeta } from '@/api/client';
+import { streamMeta } from '@/api/stream';
 import { useAuthStore } from '@/stores/auth';
+import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtSecondsAgo } from '@/utils/format';
 import BrandMark from '@/components/BrandMark.vue';
@@ -20,7 +22,6 @@ interface NavItem { to: string; label: string; icon: Component; badge?: boolean 
 const navItems: NavItem[] = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
   { to: '/strategies', label: '策略', icon: Activity },
-  { to: '/signals', label: '信号', icon: Radio },
   { to: '/alerts', label: '告警', icon: Bell, badge: true },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
@@ -29,6 +30,7 @@ const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const auth = useAuthStore();
+const realtime = useRealtimeStore();
 const settings = useSettingsStore();
 
 const isMobile = ref(false);
@@ -41,6 +43,15 @@ let mql: MediaQueryList | null = null;
 
 const collapsed = computed(() => !isMobile.value && settings.collapsed);
 const activePath = computed(() => route.path);
+const breadcrumbParent = computed(() => route.meta.parent || null);
+
+const streamChip = computed(() => {
+  if (realtime.live) return { text: '实时', dot: 'running' as const, title: 'SSE 实时连接正常' };
+  if (realtime.state === 'connecting') return { text: '实时连接中', dot: 'warn' as const, title: '正在建立 SSE 实时连接' };
+  if (realtime.state === 'reconnecting') return { text: '实时重连中', dot: 'warn' as const, title: '实时连接中断，自动重连中；页面使用轮询兜底' };
+  if (realtime.state === 'error') return { text: '轮询模式', dot: 'warn' as const, title: streamMeta.lastError || '实时连接不可用，已降级为轮询' };
+  return { text: '轮询模式', dot: 'warn' as const, title: '实时连接不可用，页面使用轮询兜底' };
+});
 
 const userOptions = computed(() => [
   { key: 'account', label: auth.user?.name || 'Trader', disabled: true },
@@ -48,44 +59,14 @@ const userOptions = computed(() => [
   { key: 'logout', label: '退出登录', icon: () => null },
 ]);
 
-function isActive(to: string): boolean {
-  return activePath.value === to || activePath.value.startsWith(to + '/');
-}
-
-function shanghaiMinutes(): number {
-  const d = new Date(Date.now() + 8 * 3600 * 1000);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
-}
-
-function inSessions(minutes: number, sessions: [number, number][]): boolean {
-  return sessions.some(([start, end]) => minutes >= start && minutes < end);
-}
-
-const marketChips = computed(() => {
-  // 依赖 now 触发每 30s 重算
-  void now.value;
-  const m = shanghaiMinutes();
-  const weekday = new Date(Date.now() + 8 * 3600 * 1000).getUTCDay(); // 0=周日
-  const weekend = weekday === 0 || weekday === 6;
-  const aTrading = !weekend && inSessions(m, [[555, 690], [780, 900]]);
-  const aLunch = !weekend && m >= 690 && m < 780;
-  const aText = weekend ? '休市' : aTrading ? '交易中' : aLunch ? '午间休市' : m < 555 ? '未开盘' : '已收盘';
-  const futNight = m >= 1260 || m < 150;
-  const futDay = !weekend && inSessions(m, [[540, 615], [630, 690], [810, 900]]);
-  const futLunch = !weekend && ((m >= 615 && m < 630) || (m >= 690 && m < 810));
-  const futText = futNight ? '夜盘' : futDay ? '交易中' : futLunch ? '午间休市' : '休市';
-  return [
-    { label: 'A股', text: aText, active: aTrading },
-    { label: '期货', text: futText, active: futNight || futDay },
-  ];
-});
-
 const freshness = computed(() => {
   void now.value;
   return fmtSecondsAgo(apiMeta.lastResponseAt);
 });
 
-const breadcrumbParent = computed(() => route.meta.parent || null);
+function isActive(to: string): boolean {
+  return activePath.value === to || activePath.value.startsWith(to + '/');
+}
 
 async function loadAlertCount(): Promise<void> {
   try {
@@ -98,11 +79,11 @@ async function loadAlertCount(): Promise<void> {
 
 function onRefresh(): void {
   settings.triggerRefresh();
-  loadAlertCount();
+  void loadAlertCount();
 }
 
 function onAlertsChanged(): void {
-  loadAlertCount();
+  void loadAlertCount();
 }
 
 function onMenuClick(): void {
@@ -129,6 +110,10 @@ function applyViewport(): void {
   if (!isMobile.value) drawerOpen.value = false;
 }
 
+watch(() => realtime.lastAlertChangeAt, () => { void loadAlertCount(); });
+watch(() => settings.refreshSeq, () => { void loadAlertCount(); });
+watch(() => route.fullPath, () => { drawerOpen.value = false; });
+
 onMounted(() => {
   applyViewport();
   mql = window.matchMedia('(max-width: 899px)');
@@ -137,8 +122,9 @@ onMounted(() => {
   window.addEventListener('qwatch:alerts-changed', onAlertsChanged);
   clockTimer = window.setInterval(() => { now.value = Date.now(); }, 5000);
   alertTimer = window.setInterval(loadAlertCount, 60000);
-  if (!auth.user) auth.fetchMe();
-  loadAlertCount();
+  realtime.start();
+  if (!auth.user) void auth.fetchMe();
+  void loadAlertCount();
 });
 
 onBeforeUnmount(() => {
@@ -147,10 +133,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('qwatch:alerts-changed', onAlertsChanged);
   if (clockTimer) window.clearInterval(clockTimer);
   if (alertTimer) window.clearInterval(alertTimer);
+  realtime.stop();
 });
-
-watch(() => settings.refreshSeq, loadAlertCount);
-watch(() => route.fullPath, () => { drawerOpen.value = false; });
 </script>
 
 <template>
@@ -176,10 +160,10 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
       </nav>
       <div class="sidebar-foot">
         <template v-if="!collapsed">
-          <span class="env"><StatusDot status="running" :size="6" /> v0.1.0</span>
-          <span class="ver">qwatch v0.1.0</span>
+          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.3.0</span>
+          <span class="ver">qwatch · 可信看门狗</span>
         </template>
-        <span v-else class="ver">0.1</span>
+        <span v-else class="ver">0.2</span>
       </div>
     </aside>
     <div v-if="isMobile && drawerOpen" class="overlay" @click="drawerOpen = false" />
@@ -199,27 +183,13 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
           </div>
         </div>
         <div class="topbar-right">
-          <div class="market-chips">
-            <span v-for="chip in marketChips" :key="chip.label" class="market-chip">
-              <StatusDot :status="chip.active ? 'running' : 'off_hours'" :size="6" />
-              {{ chip.label }} {{ chip.text }}
-            </span>
-          </div>
+          <span class="stream-chip" :title="streamChip.title">
+            <StatusDot :status="streamChip.dot" :size="6" />
+            <span class="stream-text">{{ streamChip.text }}</span>
+          </span>
           <span class="freshness num" title="数据新鲜度">{{ freshness }}</span>
           <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
             <RefreshCw :size="16" :class="{ spinning: apiMeta.pending > 0 }" />
-          </button>
-          <button
-            v-if="alertCount > 0"
-            type="button"
-            class="alert-pill"
-            aria-label="查看告警"
-            @click="router.push('/alerts')"
-          >
-            <Bell :size="13" />
-            <span class="alert-pill-tag">P0</span>
-            <strong>{{ alertCount }}</strong>
-            <span class="alert-pill-text">条告警</span>
           </button>
           <button
             class="icon-btn bell"
@@ -230,6 +200,7 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
             @click="router.push('/alerts')"
           >
             <Bell :size="17" />
+            <span v-if="alertCount > 0" class="bell-dot">{{ alertCount > 9 ? '9+' : alertCount }}</span>
           </button>
           <n-dropdown trigger="click" :options="userOptions" @select="onUserSelect">
             <button class="avatar" type="button" :aria-label="'账号：' + (auth.user?.name || 'Trader')">
@@ -351,9 +322,6 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
 .nav-item.has-alert .nav-icon {
   color: #ff8f86;
 }
-.nav-item.has-alert.active {
-  border-color: rgba(240, 68, 56, 0.28);
-}
 .nav-alert-dot {
   position: absolute;
   top: 7px;
@@ -424,47 +392,23 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   align-items: center;
   gap: 10px;
 }
-.alert-pill {
+.stream-chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 28px;
+  gap: 6px;
+  height: 24px;
   padding: 0 9px;
-  border-radius: 8px;
-  border: 1px solid rgba(240, 68, 56, 0.35);
-  background: rgba(240, 68, 56, 0.12);
-  color: #ffb4ad;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
   font-size: 11px;
-  cursor: pointer;
-  transition: background-color 150ms ease, border-color 150ms ease;
+  white-space: nowrap;
 }
-.alert-pill:hover {
-  background: rgba(240, 68, 56, 0.2);
-  border-color: rgba(240, 68, 56, 0.55);
-}
-.alert-pill-tag {
-  padding: 1px 4px;
-  border-radius: 3px;
-  background: rgba(240, 68, 56, 0.22);
-  color: #ff8f86;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 600;
-}
-.alert-pill strong {
-  color: #ff8f86;
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-.bell.has-alerts {
-  color: #ff8f86;
-  background: rgba(240, 68, 56, 0.1);
-  border-color: rgba(240, 68, 56, 0.28);
-  animation: bellGlow 2s ease-in-out infinite;
-}
-@keyframes bellGlow {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 68, 56, 0); }
-  50% { box-shadow: 0 0 0 4px rgba(240, 68, 56, 0.12); }
+.freshness {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
 }
 .icon-btn {
   position: relative;
@@ -509,29 +453,6 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.market-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.market-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.freshness {
-  font-size: 11px;
-  color: var(--text-3);
-  white-space: nowrap;
-}
 .avatar {
   display: grid;
   place-items: center;
@@ -545,6 +466,11 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
+}
+.bell.has-alerts {
+  color: #ff8f86;
+  background: rgba(240, 68, 56, 0.1);
+  border-color: rgba(240, 68, 56, 0.28);
 }
 .bell-dot {
   position: absolute;
@@ -587,19 +513,7 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
 .fade-slide-leave-to {
   opacity: 0;
 }
-
-@media (max-width: 1099px) {
-  .market-chips {
-    display: none;
-  }
-}
 @media (max-width: 899px) {
-  .alert-pill-text {
-    display: none;
-  }
-  .alert-pill {
-    padding: 0 7px;
-  }
   .sidebar {
     position: fixed;
     left: 0;
@@ -623,7 +537,8 @@ watch(() => route.fullPath, () => { drawerOpen.value = false; });
   }
 }
 @media (max-width: 639px) {
-  .freshness {
+  .freshness,
+  .stream-text {
     display: none;
   }
   .topbar {

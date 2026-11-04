@@ -1,12 +1,12 @@
+// StrategyTokenModal.vue — 策略接入令牌：查看掩码、生成新令牌（只展示一次）、吊销（v0.2）。
 <script setup lang="ts">
-// StrategyTokenModal.vue — 策略接入令牌：查看掩码、生成新令牌（只展示一次）、吊销。
 import { ref, watch } from 'vue';
 import { NButton, NModal, useDialog, useMessage } from 'naive-ui';
 import { AlertTriangle, Copy, KeyRound, Plus, RotateCcw, Trash2 } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Runner, StrategyToken } from '@/api/types';
 import { fmtDateTime } from '@/utils/format';
-import { heartbeatCurl } from '@/utils/integration';
+import { reportCurl } from '@/utils/integration';
 
 const props = defineProps<{ show: boolean; runner: Runner | null }>();
 const emit = defineEmits<{ 'update:show': [value: boolean] }>();
@@ -36,21 +36,14 @@ async function load(): Promise<void> {
 watch(() => props.show, (visible) => {
   if (!visible) return;
   result.value = null;
-  load();
+  void load();
 });
 
 async function generate(): Promise<void> {
   if (!props.runner) return;
   generating.value = true;
   try {
-    result.value = await api.createToken({
-      runner_id: props.runner.id,
-      name: props.runner.name,
-      platform: props.runner.platform,
-      markets: [props.runner.market],
-      strategy_type: props.runner.strategy_type,
-      tags: props.runner.tags,
-    });
+    result.value = await api.createToken({ runner_id: props.runner.id, name: props.runner.name });
     message.success('新令牌已生成，请立即保存');
     await load();
   } catch (err) {
@@ -63,7 +56,7 @@ async function generate(): Promise<void> {
 function revoke(token: StrategyToken): void {
   dialog.warning({
     title: '吊销令牌',
-    content: '吊销后使用该令牌上报心跳与信号的策略将立即失败，且不可恢复。',
+    content: '吊销后使用该令牌上报的进程将立即失败，且不可恢复。',
     positiveText: '确认吊销',
     negativeText: '取消',
     onPositiveClick: async () => {
@@ -119,12 +112,12 @@ function close(): void {
         <span>请立即保存。关闭弹窗后无法再次查看完整令牌；旧令牌不会自动失效，如有需要请手动吊销。</span>
       </div>
       <p class="result-label">接入示例（心跳）</p>
-      <pre class="code-block mono">{{ heartbeatCurl(result.token, result.record.name) }}</pre>
-      <p class="code-note">信号批量上报：POST /api/v1/events，同样使用该 Bearer Token。</p>
+      <pre class="code-block mono">{{ reportCurl(result.token) }}</pre>
+      <p class="code-note">同一策略组的所有进程共用一个 token；每个进程使用稳定的 instrument 名上报。</p>
     </template>
 
     <template v-else>
-      <p class="modal-note">策略通过 Bearer Token 上报心跳与信号。完整令牌只在生成时展示一次；页面仅保留前缀。</p>
+      <p class="modal-note">策略通过 Bearer Token 上报心跳与动态。完整令牌只在生成时展示一次；页面仅保留前缀。</p>
       <div v-if="loading" class="loading-line"><div class="skel skel-line" style="height: 40px" /><div class="skel skel-line" style="height: 40px" /></div>
       <div v-else-if="error" class="error-bar"><span class="dot" />{{ error }}</div>
       <template v-else>

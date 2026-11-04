@@ -1,55 +1,43 @@
-// utils/catalog.ts — 平台 / 策略类型 / 市场 / 信号动作的展示映射与筛选项（后端 *_label 与此保持一致）。
-import type { Market, Platform, SignalAction, StrategyType } from '@/api/types';
+// utils/catalog.ts — v0.2 展示映射：状态、动态类型、方向/动作、告警规则（无市场/平台/策略类型）。
+import type { AlertRule, EventType, ProcessStatus, RunnerStatus, SignalAction, SignalDirection } from '@/api/types';
 
-export const PLATFORM_LABELS: Record<Platform, string> = {
-  ptrade: 'PTrade', qmt: 'QMT', myquant: '掘金', tqsdk: '天勤', custom: '自研',
+export const RUNNER_STATUS_LABELS: Record<RunnerStatus, string> = {
+  running: '运行中',
+  degraded: '降级',
+  offline: '离线',
+  paused: '已暂停',
 };
 
-export const STRATEGY_TYPE_LABELS: Record<StrategyType, string> = {
-  trend: '趋势', arbitrage: '套利', intraday: '日内', grid: '网格',
-  multifactor: '多因子', market_making: '做市', other: '其他',
+export const PROCESS_STATUS_LABELS: Record<ProcessStatus, string> = {
+  running: '运行中',
+  degraded: '降级',
+  offline: '离线',
+  paused: '已暂停',
+  retired: '已停用',
 };
 
-export const VENUE_LABELS: Record<string, string> = {
-  XSGE: '上期所', CFFEX: '中金所', XSHG: '上交所', XSHE: '深交所',
-  XHKG: '港交所', XNAS: '纳斯达克', XNYS: '纽交所', BINANCE: '币安', OKX: 'OKX', CTP: 'CTP',
+export const EVENT_TYPE_LABELS: Record<EventType, string> = {
+  message: '消息',
+  signal: '信号',
 };
 
-export function venueLabel(venue?: string): string {
-  if (!venue) return '—';
-  return VENUE_LABELS[venue] || venue;
-}
-
-export const MARKET_LABELS: Record<Market, string> = {
-  CN_A: 'A股', CN_FUT: '期货', FX: '外汇', CRYPTO: '加密', US: '美股', HK: '港股',
+export const DIRECTION_LABELS: Record<SignalDirection, string> = {
+  long: '做多',
+  short: '做空',
 };
 
-export const SIGNAL_ACTION_LABELS: Record<SignalAction, string> = {
-  open: '开仓', close: '平仓', add: '加仓', reduce: '减仓',
+export const ACTION_LABELS: Record<SignalAction, string> = {
+  open: '开仓',
+  close: '平仓',
+  add: '加仓',
+  reduce: '减仓',
 };
 
-export const PLATFORM_OPTIONS = (Object.keys(PLATFORM_LABELS) as Platform[]).map((value) => ({
-  value, label: PLATFORM_LABELS[value],
-}));
+export const RULE_LABELS: Record<AlertRule, string> = {
+  heartbeat_lost: '心跳丢失',
+  runner_stalled: '策略卡死',
+};
 
-export const STRATEGY_TYPE_OPTIONS = (Object.keys(STRATEGY_TYPE_LABELS) as StrategyType[]).map((value) => ({
-  value, label: STRATEGY_TYPE_LABELS[value],
-}));
-
-/** 令牌可绑定的市场（不含港股，与 docs/FEATURE-SIGNALS-TOKENS.md 一致） */
-export const TOKEN_MARKET_OPTIONS: { value: Market; label: string }[] = [
-  { value: 'CN_A', label: 'A股' },
-  { value: 'CN_FUT', label: '期货' },
-  { value: 'FX', label: '外汇' },
-  { value: 'CRYPTO', label: '加密' },
-  { value: 'US', label: '美股' },
-];
-
-/** 逗号分隔标签输入 → 去重后的字符串数组 */
-export function parseTags(text: string): string[] {
-  const seen = new Set<string>();
-  return text
-    .split(/[,，]/)
-    .map((item) => item.trim())
-    .filter((item) => item && !seen.has(item) && seen.add(item));
+export function ruleLabel(rule: string): string {
+  return RULE_LABELS[rule as AlertRule] || rule;
 }

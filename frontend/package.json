@@ -1,7 +1,7 @@
 {
   "name": "qwatch-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "qwatch 监控工作台前端",
   "scripts": {
@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "dayjs": "^1.11.13",
-    "echarts": "^5.6.0",
     "lucide-vue-next": "^0.468.0",
     "naive-ui": "^2.42.0",
     "pinia": "^3.0.1",

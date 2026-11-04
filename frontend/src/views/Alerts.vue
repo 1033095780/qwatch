@@ -1,28 +1,33 @@
+// Alerts.vue — v0.2 告警中心：P0 实时告警（SSE + 轮询兜底），活跃/历史，确认与静默。
 <script setup lang="ts">
-// Alerts.vue — 告警中心：心跳丢失 / 策略卡死（统一 P0 红色）· 活跃/历史 Tabs · 确认与静默。
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { NButton, NDropdown, useMessage } from 'naive-ui';
-import { AlertTriangle, BellOff, Check } from 'lucide-vue-next';
+import { RefreshCw } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
+import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtDateTime, fmtDuration, fromNow } from '@/utils/format';
+import { ruleLabel } from '@/utils/catalog';
+import { fmtDateTime, fromNow } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
-import SeverityTag from '@/components/SeverityTag.vue';
+import StatusDot from '@/components/StatusDot.vue';
 import TabBar from '@/components/TabBar.vue';
 import type { TabItem } from '@/components/TabBar.vue';
 
 const settings = useSettingsStore();
+const realtime = useRealtimeStore();
 const message = useMessage();
 
 const activeItems = ref<Alert[]>([]);
 const historyItems = ref<Alert[]>([]);
 const loading = ref(true);
+const refreshing = ref(false);
 const error = ref('');
 const tab = ref('active');
 const busyId = ref('');
-const ackAllBusy = ref(false);
+let pollTimer: number | undefined;
+let reloadTimer: number | undefined;
 
 const silenceOptions = [
   { label: '静默 1 小时', key: '1h' },
@@ -30,82 +35,48 @@ const silenceOptions = [
   { label: '静默 24 小时', key: '24h' },
 ];
 
-/** 告警规则展示名：后端只产出心跳丢失 / 策略卡死两类，统一按 P0 红色展示 */
-const RULE_LABEL: Record<string, string> = {
-  heartbeat_lost: '心跳丢失',
-  runner_stalled: '策略卡死',
-};
-
-const STATUS_LABEL: Record<Alert['status'], string> = {
-  firing: '触发中',
-  acknowledged: '已确认',
-  resolved: '已恢复',
-};
-
 const firingCount = computed(() => activeItems.value.filter((a) => a.status === 'firing').length);
-const ackedCount = computed(() => historyItems.value.filter((a) => a.status === 'acknowledged').length);
-
 const tabs = computed<TabItem[]>(() => [
   { key: 'active', label: '活跃', count: activeItems.value.length },
   { key: 'history', label: '历史', count: historyItems.value.length },
 ]);
-
 const currentItems = computed(() => {
   const source = tab.value === 'active' ? activeItems.value : historyItems.value;
   return [...source].sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at));
 });
 
-function durationOf(alert: Alert): string {
-  if (!alert.ends_at) return '';
-  return fmtDuration((Date.parse(alert.ends_at) - Date.parse(alert.starts_at)) / 1000);
-}
-
-/** 展示用 label：静默时间单独展示，不重复塞进 label 列表 */
-function visibleLabels(alert: Alert): [string, string][] {
-  return Object.entries(alert.labels).filter(([key]) => key !== 'silenced_until');
-}
-
-async function load(initial = false): Promise<void> {
+async function load(initial = false, silent = false): Promise<void> {
   if (initial) loading.value = true;
+  else if (!silent) refreshing.value = true;
   error.value = '';
   try {
     const [active, history] = await Promise.all([api.alerts('active'), api.alerts('history')]);
     activeItems.value = active.items;
     historyItems.value = history.items;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '告警加载失败';
+    if (!silent || !activeItems.value.length) error.value = err instanceof Error ? err.message : '告警加载失败';
   } finally {
     loading.value = false;
+    refreshing.value = false;
   }
+}
+
+function scheduleReload(): void {
+  window.clearTimeout(reloadTimer);
+  reloadTimer = window.setTimeout(() => { void load(false, true); }, 700);
 }
 
 async function acknowledge(alert: Alert): Promise<void> {
   busyId.value = alert.id;
   try {
     await api.ackAlert(alert.id);
-    message.success('已确认告警：' + (RULE_LABEL[alert.rule] ?? alert.rule));
-    await load();
+    message.success('已确认告警：' + ruleLabel(alert.rule));
+    await load(false, true);
     window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
   } catch (err) {
     message.error(err instanceof Error ? err.message : '确认失败');
   } finally {
     busyId.value = '';
-  }
-}
-
-async function acknowledgeAll(): Promise<void> {
-  const firing = activeItems.value.filter((item) => item.status === 'firing');
-  if (!firing.length) return;
-  ackAllBusy.value = true;
-  try {
-    await Promise.all(firing.map((item) => api.ackAlert(item.id)));
-    message.success('已确认 ' + firing.length + ' 条 P0 告警');
-    await load();
-    window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
-  } catch (err) {
-    message.error(err instanceof Error ? err.message : '批量确认失败');
-  } finally {
-    ackAllBusy.value = false;
   }
 }
 
@@ -115,7 +86,7 @@ async function silence(alert: Alert, duration = '1h'): Promise<void> {
     await api.silenceAlert(alert.id, duration);
     const labels: Record<string, string> = { '1h': '1 小时', '4h': '4 小时', '24h': '24 小时' };
     message.success('已静默 ' + (labels[duration] ?? '1 小时'));
-    await load();
+    await load(false, true);
     window.dispatchEvent(new CustomEvent('qwatch:alerts-changed'));
   } catch (err) {
     message.error(err instanceof Error ? err.message : '静默失败');
@@ -124,42 +95,47 @@ async function silence(alert: Alert, duration = '1h'): Promise<void> {
   }
 }
 
-watch(() => settings.refreshSeq, () => load());
+watch(() => realtime.lastAlertChangeAt, scheduleReload);
+watch(() => settings.refreshSeq, () => { void load(false, true); });
 
-onMounted(() => load(true));
+onMounted(() => {
+  void load(true);
+  pollTimer = window.setInterval(() => {
+    if (!document.hidden) void load(false, true);
+  }, 20000);
+});
+
+onBeforeUnmount(() => {
+  window.clearInterval(pollTimer);
+  window.clearTimeout(reloadTimer);
+});
 </script>
 
 <template>
   <div class="page">
     <PageHeader
-      title="告警中心"
-      :subtitle="firingCount + ' 条触发中 · ' + ackedCount + ' 条已确认 · 心跳丢失 / 策略卡死统一 P0 红色告警 · 时间 Asia/Shanghai'"
+      title="告警"
+      :subtitle="firingCount + ' 条触发中 · 共 ' + activeItems.length + ' 条活跃 · 心跳丢失 / 策略卡死统一 P0 红色告警'"
     >
       <template #extra>
-        <span class="chip">确认 / 静默立即生效</span>
+        <span class="live-hint" :class="{ live: realtime.live }">
+          <StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />
+          {{ realtime.live ? '实时' : '轮询兜底' }}
+        </span>
+        <n-button size="small" :loading="refreshing" @click="load(false)">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </n-button>
       </template>
     </PageHeader>
 
-    <div v-if="firingCount > 0" class="alert-banner">
-      <div class="banner-main">
-        <span class="banner-icon"><AlertTriangle :size="18" /></span>
-        <div class="banner-text">
-          <strong>{{ firingCount }} 条 P0 告警待处理</strong>
-          <span>心跳丢失 / 策略卡死 · 建议立即确认并检查策略进程</span>
-        </div>
-      </div>
-      <n-button size="small" type="error" secondary :loading="ackAllBusy" @click="acknowledgeAll">
-        全部确认
-      </n-button>
+    <div v-if="error" class="error-bar">
+      <span class="dot" />{{ error }}
+      <n-button text size="tiny" @click="load(true)">重试</n-button>
     </div>
 
     <section class="card alerts-card">
       <TabBar v-model="tab" :tabs="tabs" />
-
-      <div v-if="error" class="error-bar" style="margin-top: 14px">
-        <span class="dot" />{{ error }}
-        <n-button text size="tiny" @click="load(true)">重试</n-button>
-      </div>
 
       <div v-if="loading && !activeItems.length && !historyItems.length" class="loading-list">
         <div v-for="i in 3" :key="i" class="skel" style="height: 92px; border-radius: 10px" />
@@ -168,49 +144,32 @@ onMounted(() => load(true));
       <div v-else-if="!currentItems.length" class="empty-wrap">
         <EmptyState
           :title="tab === 'active' ? '当前没有活跃告警' : '暂无历史告警'"
-          :description="tab === 'active' ? '所有策略心跳与运行状态均正常' : '告警恢复后会归档到这里'"
+          :description="tab === 'active' ? '所有策略组心跳与 loop 判定正常。' : '告警确认或恢复后会归档到这里。'"
         />
       </div>
 
       <div v-else class="alert-list">
-        <article v-for="alert in currentItems" :key="alert.id" class="alert-card P0">
+        <article v-for="alert in currentItems" :key="alert.id" class="alert-card" :class="alert.status">
           <div class="alert-head">
-            <div class="head-left">
-              <SeverityTag severity="P0" />
-              <span class="rule">{{ RULE_LABEL[alert.rule] ?? alert.rule }}</span>
-              <span class="status-chip" :class="alert.status">{{ STATUS_LABEL[alert.status] }}</span>
-            </div>
-            <div class="head-right">
-              <span class="time mono" :title="alert.starts_at">{{ fromNow(alert.starts_at) }}</span>
-              <span class="time-abs mono">{{ fmtDateTime(alert.starts_at) }}</span>
-            </div>
+            <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
+            <span class="mono rule-key">{{ alert.rule }}</span>
+            <span class="status-chip" :class="alert.status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
+            <span class="spacer" />
+            <span class="time mono" :title="alert.starts_at">{{ fromNow(alert.starts_at) }}</span>
+            <span class="time-abs mono">{{ fmtDateTime(alert.starts_at) }}</span>
           </div>
-          <p class="summary">{{ alert.summary }}</p>
+          <p class="alert-summary">{{ alert.summary }}</p>
           <div class="alert-meta">
             <router-link :to="'/strategies/' + alert.runner_id" class="runner-link">{{ alert.runner_name }}</router-link>
             <span class="sep">·</span>
             <span class="mono">{{ alert.runner_id }}</span>
-            <template v-for="entry in visibleLabels(alert)" :key="entry[0]">
-              <span class="label-chip mono">{{ entry[0] }}={{ entry[1] }}</span>
-            </template>
-            <span v-if="alert.ends_at" class="chip chip--soft">持续 {{ durationOf(alert) }}</span>
-            <span v-if="alert.labels.silenced_until" class="silenced mono">静默至 {{ fmtDateTime(alert.labels.silenced_until) }}</span>
+            <span v-if="alert.ends_at" class="chip chip--soft">持续至 {{ fmtDateTime(alert.ends_at) }}</span>
+            <span v-if="alert.labels && alert.labels.silenced_until" class="silenced mono">静默至 {{ fmtDateTime(alert.labels.silenced_until) }}</span>
             <span class="spacer" />
             <div v-if="alert.status !== 'resolved'" class="actions">
-              <n-button
-                v-if="alert.status === 'firing'"
-                size="tiny"
-                :loading="busyId === alert.id"
-                @click="acknowledge(alert)"
-              >
-                <template #icon><Check :size="12" /></template>
-                确认
-              </n-button>
+              <n-button v-if="alert.status === 'firing'" size="tiny" :loading="busyId === alert.id" @click="acknowledge(alert)">确认</n-button>
               <n-dropdown trigger="click" :options="silenceOptions" @select="(key) => silence(alert, String(key))">
-                <n-button size="tiny" quaternary :loading="busyId === alert.id">
-                  <template #icon><BellOff :size="12" /></template>
-                  静默
-                </n-button>
+                <n-button size="tiny" quaternary :loading="busyId === alert.id">静默</n-button>
               </n-dropdown>
             </div>
           </div>
@@ -221,52 +180,15 @@ onMounted(() => load(true));
 </template>
 
 <style scoped>
-.alert-banner {
-  display: flex;
+.live-hint {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 12px;
-  padding: 14px 18px;
-  border: 1px solid rgba(240, 68, 56, 0.35);
-  border-radius: 12px;
-  background: linear-gradient(90deg, rgba(240, 68, 56, 0.16), rgba(240, 68, 56, 0.06));
-}
-.banner-main {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-.banner-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  flex: none;
-  border-radius: 9px;
-  background: rgba(240, 68, 56, 0.2);
-  color: #ff8f86;
-  animation: bannerPulse 2s ease-in-out infinite;
-}
-@keyframes bannerPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 68, 56, 0.25); }
-  50% { box-shadow: 0 0 0 6px rgba(240, 68, 56, 0.08); }
-}
-.banner-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.banner-text strong {
-  color: #ffb4ad;
-  font-size: 13px;
-  font-weight: 600;
-}
-.banner-text span {
-  color: var(--text-2);
+  gap: 6px;
   font-size: 11px;
+  color: var(--text-3);
+}
+.live-hint.live {
+  color: #2ecc8f;
 }
 .alerts-card {
   padding: 0 20px 16px;
@@ -287,48 +209,31 @@ onMounted(() => load(true));
   padding-top: 12px;
 }
 .alert-card {
-  position: relative;
   padding: 14px 16px 12px;
   border-radius: 10px;
-  border: 1px solid rgba(240, 68, 56, 0.2);
+  border: 1px solid var(--border);
+  background: rgba(21, 28, 44, 0.45);
+}
+.alert-card.firing {
+  border-color: rgba(240, 68, 56, 0.28);
   background: rgba(240, 68, 56, 0.045);
-  overflow: hidden;
-  transition: border-color 150ms ease, background-color 150ms ease;
-}
-.alert-card::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-}
-.alert-card.P0::before { background: #f04438; }
-.alert-card:hover {
-  border-color: var(--border-strong);
-  background: rgba(21, 28, 44, 0.8);
 }
 .alert-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
-.head-left {
-  display: flex;
+.rule-chip {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.head-right {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-}
-.rule {
-  font-size: 13px;
-  font-weight: 500;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(240, 68, 56, 0.32);
+  background: rgba(240, 68, 56, 0.1);
+  color: #ff8f86;
+  font-size: 10px;
 }
 .rule-key {
   font-size: 10px;
@@ -358,6 +263,9 @@ onMounted(() => load(true));
   background: rgba(95, 109, 132, 0.12);
   border-color: rgba(95, 109, 132, 0.26);
 }
+.spacer {
+  flex: 1;
+}
 .time {
   font-size: 11px;
   color: var(--text-2);
@@ -366,7 +274,7 @@ onMounted(() => load(true));
   font-size: 10px;
   color: var(--text-3);
 }
-.summary {
+.alert-summary {
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.65;
@@ -385,23 +293,12 @@ onMounted(() => load(true));
   color: var(--primary);
   font-size: 11px;
 }
-.label-chip {
-  display: inline-flex;
-  align-items: center;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
+.sep {
   color: var(--text-3);
-  font-size: 10px;
 }
 .silenced {
   color: #f5b64b;
   font-size: 10px;
-}
-.spacer {
-  flex: 1;
 }
 .actions {
   display: flex;

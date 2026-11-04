@@ -1,73 +1,51 @@
+// Strategies.vue — v0.2 策略组列表：搜索/状态筛选 + 卡片（可展开进程）+ 新建策略。
 <script setup lang="ts">
-// Strategies.vue — 策略列表：搜索 + 状态/市场/平台筛选（平台/市场选项取自 runners 实际值）+ 卡片网格 + 空状态。
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
 import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Runner, RunnerStatus } from '@/api/types';
-import { MARKET_LABELS } from '@/utils/catalog';
+import { RUNNER_STATUS_LABELS } from '@/utils/catalog';
+import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import EmptyState from '@/components/EmptyState.vue';
+import GroupCard from '@/components/GroupCard.vue';
 import PageHeader from '@/components/PageHeader.vue';
-import RunnerCard from '@/components/RunnerCard.vue';
 import StrategyCreateModal from '@/components/StrategyCreateModal.vue';
 
 const settings = useSettingsStore();
+const realtime = useRealtimeStore();
 
 const runners = ref<Runner[]>([]);
 const loading = ref(true);
 const error = ref('');
 const createOpen = ref(false);
+let pollTimer: number | undefined;
+let reloadTimer: number | undefined;
 
 const keyword = ref('');
 const statusFilter = ref<RunnerStatus | 'all'>('all');
-const marketFilter = ref<string>('all');
-const platformFilter = ref<string>('all');
 
-const statusOptions = [
-  { label: '全部状态', value: 'all' },
-  { label: '运行中', value: 'running' },
-  { label: '降级', value: 'degraded' },
-  { label: '离线', value: 'offline' },
-  { label: '休市', value: 'off_hours' },
-  { label: '已暂停', value: 'paused' },
-];
-/** 平台/市场选项取自当前 runners 实际值，避免展示库里并不存在的枚举 */
-const marketOptions = computed(() => {
-  const seen = new Map<string, string>();
-  runners.value.forEach((r) => {
-    if (r.market) seen.set(r.market, MARKET_LABELS[r.market] ?? r.market);
-  });
-  return [{ label: '全部市场', value: 'all' }, ...[...seen].map(([value, label]) => ({ value, label }))];
-});
-const platformOptions = computed(() => {
-  const seen = new Map<string, string>();
-  runners.value.forEach((r) => { if (r.platform) seen.set(r.platform, r.platform_label || r.platform); });
-  return [{ label: '全部平台', value: 'all' }, ...[...seen].map(([value, label]) => ({ value, label }))];
-});
+const statusOptions = [{ label: '全部状态', value: 'all' }, ...Object.entries(RUNNER_STATUS_LABELS).map(([value, label]) => ({ value, label }))];
 
 const filtered = computed(() => {
   const q = keyword.value.trim().toLowerCase();
   return runners.value.filter((runner) => {
     if (statusFilter.value !== 'all' && runner.status !== statusFilter.value) return false;
-    if (marketFilter.value !== 'all' && runner.market !== marketFilter.value) return false;
-    if (platformFilter.value !== 'all' && runner.platform !== platformFilter.value) return false;
-    if (q && !(runner.name + runner.strategy + runner.id).toLowerCase().includes(q)) return false;
+    if (q && !(runner.name + runner.id + runner.description).toLowerCase().includes(q)) return false;
     return true;
   });
 });
 
-const hasFilter = computed(() =>
-  !!keyword.value || statusFilter.value !== 'all' || marketFilter.value !== 'all'
-  || platformFilter.value !== 'all');
+const hasFilter = computed(() => !!keyword.value || statusFilter.value !== 'all');
 
-async function load(initial = false): Promise<void> {
+async function load(initial = false, silent = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
   try {
     runners.value = (await api.runners()).items;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : '策略列表加载失败';
+    if (!silent) error.value = err instanceof Error ? err.message : '策略列表加载失败';
   } finally {
     loading.value = false;
   }
@@ -76,18 +54,32 @@ async function load(initial = false): Promise<void> {
 function resetFilters(): void {
   keyword.value = '';
   statusFilter.value = 'all';
-  marketFilter.value = 'all';
-  platformFilter.value = 'all';
 }
 
-watch(() => settings.refreshSeq, () => load());
+function scheduleReload(): void {
+  window.clearTimeout(reloadTimer);
+  reloadTimer = window.setTimeout(() => { void load(false, true); }, 700);
+}
 
-onMounted(() => load(true));
+watch(() => settings.refreshSeq, () => { void load(false, true); });
+watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt], scheduleReload);
+
+onMounted(() => {
+  void load(true);
+  pollTimer = window.setInterval(() => {
+    if (!document.hidden) void load(false, true);
+  }, 20000);
+});
+
+onBeforeUnmount(() => {
+  window.clearInterval(pollTimer);
+  window.clearTimeout(reloadTimer);
+});
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="策略" :subtitle="'运行实例与状态 · 共 ' + runners.length + ' 个 · 告警与心跳按交易日历判定'">
+    <PageHeader title="策略" :subtitle="'策略组与进程状态 · 共 ' + runners.length + ' 组 · 一个 token = 一个策略组'">
       <template #extra>
         <n-button type="primary" size="small" @click="createOpen = true">
           <template #icon><Plus :size="14" /></template>
@@ -102,8 +94,6 @@ onMounted(() => load(true));
           <template #prefix><Search :size="14" /></template>
         </n-input>
         <n-select v-model:value="statusFilter" :options="statusOptions" size="small" class="select" />
-        <n-select v-model:value="marketFilter" :options="marketOptions" size="small" class="select" />
-        <n-select v-model:value="platformFilter" :options="platformOptions" size="small" class="select" />
       </div>
       <div class="toolbar-right">
         <span class="result mono">{{ filtered.length }} / {{ runners.length }}</span>
@@ -118,13 +108,13 @@ onMounted(() => load(true));
     </div>
 
     <div v-if="loading" class="grid grid-2">
-      <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 300px" />
+      <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 180px" />
     </div>
 
     <EmptyState
       v-else-if="!filtered.length"
-      title="没有匹配的策略"
-      :description="hasFilter ? '试着放宽筛选条件，或清空搜索关键词' : '还没有策略，点右上角「新建策略」开始接入'"
+      title="没有匹配的策略组"
+      :description="hasFilter ? '试着放宽筛选条件，或清空搜索关键词' : '还没有策略组，点右上角「新建策略」创建并生成接入令牌'"
     >
       <template #action>
         <n-button v-if="hasFilter" size="small" @click="resetFilters">重置筛选</n-button>
@@ -132,10 +122,10 @@ onMounted(() => load(true));
     </EmptyState>
 
     <div v-else class="grid grid-2">
-      <RunnerCard v-for="runner in filtered" :key="runner.id" :runner="runner" />
+      <GroupCard v-for="runner in filtered" :key="runner.id" :runner="runner" />
     </div>
 
-    <StrategyCreateModal v-model:show="createOpen" @created="load()" />
+    <StrategyCreateModal v-model:show="createOpen" @created="load(true)" />
   </div>
 </template>
 
@@ -160,7 +150,7 @@ onMounted(() => load(true));
   width: 220px;
 }
 .select {
-  width: 120px;
+  width: 128px;
 }
 .toolbar-right {
   display: flex;

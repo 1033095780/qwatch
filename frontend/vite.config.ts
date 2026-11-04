@@ -1,4 +1,4 @@
-// vite.config.ts — Vite 7 + Vue 3；dev 时 /api/v1 代理到 FastAPI 后端。
+// vite.config.ts — Vite 7 + Vue 3；dev 时 /api/v1 代理到 FastAPI 后端（v0.2 不再包含图表依赖）。
 import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
@@ -24,7 +24,6 @@ export default defineConfig({
         manualChunks: {
           vendor: ['vue', 'vue-router', 'pinia', 'dayjs'],
           naive: ['naive-ui'],
-          charts: ['echarts'],
         },
       },
     },

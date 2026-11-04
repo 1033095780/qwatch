@@ -1,142 +1,248 @@
 # qwatch
 
-**多策略 / 多市场监控工作台**：净值曲线、交易信号、策略存活 watchdog 与钉钉告警。自用，开源。
+自托管的**策略进程看门狗**：一个策略组下可以有多个进程，进程掉线或 loop 卡死时发 P0 钉钉告警，并在网页上实时看到「谁、什么时候、因为什么」出事。
+
+> v0.3 专注存活监控，并加入策略组净值。**不包含 PnL / 收益 / 回撤 / 风险指标 / 资金流水 / 交易日历**。
+
+## 核心概念
+
+| 概念 | 含义 |
+|---|---|
+| 策略组 | 一个 strategy token |
+| 进程 instrument | 策略组下的独立上报源，例如 `rb`、`ag`、`IF`，不是合约号 |
+| 合约 contract | 信号里的实际合约，例如 `rb2507` |
+| 告警 | 进程心跳丢失 / loop 连续 3 次不增长，统一 P0 |
+| 动态 | 消息 + 信号合并时间线，不触发 P0 |
+
+一个 token 可以挂 30 个进程。进程由第一次上报自动发现，不需要提前建清单。
 
 ## 功能
 
-- **总览**：默认展示组合累计盈亏金额曲线（可切净值），今日盈亏、回撤曲线、年化收益 / 最大回撤 / 夏普 / 卡玛 / 波动率 / 盈亏比（与 KPI 同卡展示、可收起），以及策略状态、迷你心跳与最新信号
-- **策略**：新建策略即生成接入令牌；一个 token 下可挂多个 instrument，首页只显示策略组，展开可看品种存活；状态支持运行中 / 休市（橘色正常）/ 已暂停（灰色）；策略自报盈亏与净值，默认展示盈亏曲线；支持普通消息、信号、心跳、告警历史、令牌管理
-- **交易信号**：按策略 / 平台 / 市场 / 方向筛选；收到的信号直接展示，不分执行状态；排序、分页、导出 CSV
-- **告警**：心跳丢失 / loop 卡死按品种检测，汇总为策略级 P0；普通消息不计入 P0；确认与静默；钉钉渠道自动加机器人关键字前缀 `[+]`，无需手机号
-- **资金**：初始资金自动取第一条权益；手工记录入金/出金后自动定位最近一次跳变并抹平曲线；支持一键重置盈亏基准
-- **Python SDK**：零依赖，实例化时填 instrument；自动心跳 + `q.tick()`；所有动作统一走 `q.report(...)`
+- 策略组 / 进程存活看板
+- 策略组净值（由进程上报，同一 token 最后一次为准）
+- 进程级心跳、loop 卡死检测
+- 组级 P0 告警 + 钉钉投递（关键词 `[+]`、加签、重试、恢复通知）
+- 告警中心实时刷新（SSE），确认 / 静默 / 历史
+- 动态时间线：消息 + 信号实时合并
+- 暂停策略、停用/恢复进程
+- SDK 每个进程独立本地日志
+- 移动端适配
 
 ## 界面
 
 ![总览](screenshots/overview.png)
 
-| 策略详情 | 交易信号 |
+| 策略 | 策略详情 |
 |---|---|
-| ![策略详情](screenshots/strategy-detail.png) | ![交易信号](screenshots/signals.png) |
+| ![策略](screenshots/strategies.png) | ![详情](screenshots/strategy-detail.png) |
 
-| 登录 | 手机 |
+| 告警 | 设置 |
 |---|---|
-| ![登录](screenshots/login.png) | ![手机](screenshots/mobile-overview.png) |
-
-## 架构
-
-~~~
-策略进程（任意语言 / Python SDK / sim 模拟器）
-   │  POST /api/v1/report   心跳 30s；信号也走同一个包
-   ▼
-FastAPI + SQLite ──▶ Watchdog（60s 判死 / loop 卡死）──▶ 红色 P0 告警 ──▶ 钉钉
-   │
-   └──▶ Vue 3 面板（总览 / 策略 / 信号 / 告警 / 设置）
-~~~
-
-- 纯推送：策略不需要被扫描、不需要开放端口；服务端只认「有没有按时报到」。
-- 只读：服务端没有任何下单能力。
-- 单机：一台交易机 / NAS / VPS 即可，数据保存在本地 SQLite。
-
-技术栈：Vue 3 + TypeScript + Vite + Naive UI + ECharts（前端）；FastAPI + SQLite（后端）。
+| ![告警](screenshots/alerts.png) | ![设置](screenshots/settings.png) |
 
 ## 快速开始
 
-环境：Python 3.10+、Node.js 20+。
+### 1. 环境
 
-### 1. 初始化基础数据
+- Python 3.11+
+- Node.js 20+（只在需要重新构建前端时使用）
 
-~~~bash
-pip install -r backend/requirements.txt
+### 2. 安装后端依赖
 
-# 只写入账户 / 钉钉渠道 / 交易日历 / 配色（注意：会清空运行时数据）
+```bash
+cd qwatch
+python -m pip install -r backend/requirements.txt
+```
+
+### 3. 初始化基础数据
+
+```bash
 python -m backend.seed
-~~~
+```
 
-### 2. 启动后端
+> `seed` 会清空运行时数据并写入演示钉钉渠道。第一次初始化运行一次即可。
+> 如果已有数据，先备份 `data/qwatch.db`，不要重复运行 seed。
 
-~~~bash
+### 4. 启动
+
+```bash
 python -m backend
-# http://127.0.0.1:8080
-~~~
+```
 
-- 默认登录密码：**qwatch**，可用环境变量 `QWATCH_PASSWORD` 修改。
-- 数据库：`data/qwatch.db`（自动创建，已 gitignore）。
-- 修改前端代码后需要重新构建，后端会直接托管 `frontend/dist`。
+打开 `http://127.0.0.1:8080`，默认密码 `qwatch`。
 
-### 3. 生成三策略模拟数据（可选）
+可覆盖环境变量：
 
-另开一个终端，运行内置模拟器：通过真实 API 创建 3 个策略和令牌，并持续发送心跳 / 信号 / 权益。
+```bash
+set QWATCH_PASSWORD=your-password
+set QWATCH_PORT=8080
+python -m backend
+```
 
-~~~bash
-python -m sim.run
-# Ctrl+C 退出
-~~~
+### 5. 创建策略并拿到 token
 
-- 策略：螺纹钢趋势（QMT）/ 股指日内（PTrade）/ 白银波段（掘金）
-- 首次运行会补齐 180 天历史权益，总览的夏普、回撤、年化等指标立即有数据。
-- 令牌保存在 `data/sim_tokens.json`（gitignore），重启后自动复用。
-- 环境变量：`QWATCH_URL`、`QWATCH_PASSWORD`。
+打开「策略」→「新建策略」：
 
-### 4. 前端开发（可选）
+- 填写策略名
+- 创建成功后弹窗显示一次性 token
+- 同一策略组下所有进程共用这个 token
 
-~~~bash
-cd frontend
-npm install
-npm run dev      # http://127.0.0.1:5173，/api 代理到 8080
-~~~
+### 6. 安装 Python SDK
 
-生产构建：
+```bash
+python -m pip install -e sdk/python
+```
 
-~~~bash
-cd frontend
-npm run build    # 产物在 frontend/dist，由后端直接托管
-~~~
+### 7. 进程接入
 
-## 策略接入（Python SDK）
+每个进程初始化时填自己的稳定进程名，只填一次：
 
-~~~bash
-cd sdk/python
-pip install -e .
-~~~
-
-~~~python
+```python
 from qwatch import Qwatch
 
-q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", instrument="rb2601")
-q.tick()                              # 主循环每轮调用，服务端据此判断卡死
-q.report(nav=1.1236, pnl=51300.12)    # 策略自己算的净值 / 累计盈亏
-q.report(msg="夜盘暂停")               # 普通消息，不计入 P0
-q.report(signal={"direction": "long", "action": "open", "qty": 10, "price": 3521})
-q.close()
-~~~
+q = Qwatch(
+    "http://127.0.0.1:8080",
+    token="qw_xxxxxxxx",
+    instrument="rb",       # 稳定进程名，不是 rb2507
+    log_dir="logs",         # 自动生成 logs/rb.log
+)
 
-- 什么都不填 = 心跳；信号 = 心跳 + 信号；
-- 30 秒自动心跳，60 秒无请求判死；
-- 信号字段严格校验：symbol + direction + action + qty 必须完整；
-- 策略可以同时上报 `pnl`（累计盈亏金额）和 `nav`（单位净值）；这是策略级数据，共用股票账户也能各自计算，入金出金不影响盈亏曲线。
-- 完整说明见 [sdk/python/README.md](sdk/python/README.md)。
+while True:
+    q.tick()                # 主循环每轮：服务端据此判断 loop 卡死
+    q.nav(1.0023)           # 策略组净值；任意进程可报，最后一次为准
+    q.msg("夜盘流动性差")    # 普通动态，不触发 P0
+    q.signal(               # 交易信号，不触发 P0
+        contract="rb2507",
+        direction="long",
+        action="open",
+        qty=10,
+        price=3521,
+    )
+```
 
-## 目录
+自动心跳由 SDK 后台线程完成。
 
-~~~
-backend/         FastAPI + SQLite 后端
-frontend/        Vue 3 + Naive UI + ECharts
-sdk/python/      Python 接入 SDK（零依赖）
-sim/             三策略模拟器（通过真实 API）
-screenshots/     界面截图
-data/            运行时 SQLite / 模拟器令牌（gitignore）
-~~~
+### 8. 多进程共用一个策略 token
 
-## 使用说明与限制
+```python
+rb = Qwatch(url, token, instrument="rb", log_dir="logs")
+ag = Qwatch(url, token, instrument="ag", log_dir="logs")
+if_q = Qwatch(url, token, instrument="IF", log_dir="logs")
+```
 
-- 单用户、单机部署；公网访问建议放在 Cloudflare Tunnel / Nginx + HTTPS 后面。
-- 服务端只读：不接券商、不下单。
-- 告警渠道当前支持钉钉群机器人；消息自动加关键字前缀 `[+]`（可用环境变量 `QWATCH_DINGTALK_KEYWORD` 修改），机器人安全设置同样填 `[+]`，不需要 @手机号；配置后可在设置页发送测试消息。
-- 告警规则只保留心跳丢失与策略卡死；其他规则后续按需增加。
-- 日胜率、盈亏比等指标基于权益序列计算；接入成交明细后可换成真实交易口径。
-- 演示钉钉 Webhook 为占位，请替换后再测试发送。
+换月时进程名保持 `rb`，只改信号里的 `contract=rb2507`，不会产生旧进程告警。
+
+### 9. 本地日志
+
+默认：
+
+```text
+logs/rb.log
+logs/ag.log
+logs/IF.log
+```
+
+自定义 `log_path`：
+
+```python
+Qwatch(..., instrument="rb", log_path="logs/rb-2026.log")
+```
+
+日志含时间、instrument、动作、HTTP 状态、耗时、重试、错误；不含 token；默认 5MB 轮转 3 份。
+
+## 净值
+
+- 净值是**策略组级**，不是品种级
+- 任意进程可调用 `q.nav(1.0023)`，后端以最后一次为准
+- 策略组卡片和详情会展示最新净值 + 最近净值曲线
+- 没有 PnL / 收益 / 回撤 / 风险指标
+
+## 告警规则
+
+只保留两类 P0：
+
+1. 进程心跳丢失
+2. 进程 loop 连续 3 次不增长
+
+- 按策略组汇总为一条告警，摘要列出进程名
+- 钉钉实时发送
+- 恢复后自动 resolved
+- 告警中心支持确认 / 静默 / 历史
+- 消息和信号不会触发 P0
+
+## 钉钉配置
+
+「设置」→ 钉钉渠道：
+
+- 填写 Webhook 地址
+- 加签则填 SEC 开头密钥
+- 机器人安全设置选「自定义关键字」，填 `[+]`
+- 消息自动加 `[+]` 前缀
+- 不使用 @手机号
+- 保存后可发送测试消息
+
+演示渠道（webhook 含 `demo-`）不会真正出网。
+
+## 目录结构
+
+```text
+qwatch/
+├─ backend/                 FastAPI + SQLite + SSE
+│  ├─ app.py                API / 上报 / 告警 / 静态托管
+│  ├─ db.py                 schema + v0.1→v0.3 迁移
+│  ├─ notify.py             钉钉投递 / 重试 / 投递日志
+│  ├─ sse.py                实时事件总线
+│  └─ seed.py               初始化渠道
+├─ frontend/                Vue 3 + Vite + Naive UI
+│  ├─ src/views/            总览 / 策略 / 告警 / 设置 / 登录
+│  └─ dist/                 build 后由后端托管
+├─ sdk/python/qwatch/       Python SDK
+├─ sim/                     三策略模拟器
+├─ data/                    运行时 SQLite（gitignored）
+└─ screenshots/             README 截图
+```
+
+## 开发
+
+```bash
+cd frontend
+npm install
+npm run typecheck
+npm run build
+
+cd ..
+python -m compileall -q backend sdk sim
+```
+
+模拟器：
+
+```bash
+python -m backend
+python -m sim.run
+```
+
+模拟器通过真实 API 创建 3 个策略组、4 个进程，持续发送心跳、tick、消息和信号；不发 PnL / 净值。
+
+## 数据与备份
+
+- 数据库：`data/qwatch.db`（gitignored）
+- 升级前备份：
+
+```powershell
+Copy-Item data/qwatch.db data/qwatch.backup.db
+```
+
+- v0.3 启动时会自动迁移 v0.1/v0.2 数据库；旧 PnL/资金/日历表删除，旧合约进程标记 retired，新增策略净值表。
+- 部署必须单 worker：SSE / 告警 / 限流为进程内状态。
+
+## 已知限制
+
+1. 没有交易日历：不做 A 股/期货休市判断。策略收盘后停止 tick/心跳会被判离线；需要策略端继续 tick，或手动暂停策略。
+2. 每天只跑一次、跑完退出的策略会被判离线。需要策略端保持轻量循环发送 tick/心跳。
+3. 没有进程清单：只监控已经上报过的进程，无法发现从未启动过的进程。
+4. 旧 v0.1 合约进程（如 `rb2601`）会自动 retired；新 SDK 使用稳定名 `rb`。
+5. 不提供 PnL / 净值 / 收益 / 风险 / 资金 / 账户 / 日历功能。
 
 ## License
 
-[Apache-2.0](LICENSE)
+Apache-2.0

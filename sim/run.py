@@ -1,9 +1,7 @@
-"""三个策略的模拟器：通过真实 HTTP API 登录 / 建策略 / 建令牌，再用 qwatch SDK 上报心跳与信号。
+"""qwatch v0.2 三策略模拟器：3 个策略组、4 个稳定进程，只发心跳 / tick / msg / signal。
 
-先启动后端并初始化基础数据（账户 / 渠道 / 日历）：
-    python -m backend.seed
+先启动 v0.2 后端：
     python -m backend
-
 再运行模拟器（Ctrl+C 退出）：
     python -m sim.run
 
@@ -11,7 +9,8 @@
     QWATCH_URL       后端地址，默认 http://127.0.0.1:8080
     QWATCH_PASSWORD  登录密码，默认 qwatch
 
-令牌保存在 data/sim_tokens.json（data/ 已 gitignore）；首次运行创建，之后复用。
+每个策略一个 token，缓存复用 data/sim_tokens.json；进程名固定（rb / IF / ag / au），
+白银波段是双进程策略。SDK 不再上报 equity / pnl / nav。
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ import random
 import sys
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -39,50 +38,54 @@ from qwatch import AuthError, Qwatch  # noqa: E402
 DEFAULT_URL = "http://127.0.0.1:8080"
 DEFAULT_PASSWORD = "qwatch"
 TOKENS_PATH = ROOT / "data" / "sim_tokens.json"
+LOG_DIR = ROOT / "logs"
 HEARTBEAT_S = 30
 TICK_S = 10
 REQUEST_TIMEOUT_S = 10
 
-# 三个策略：平台 / 账户 / 品种 / 频率 / 方向偏好各不相同，尽量贴近真实交易节奏。
+# 3 个策略组；instruments 是稳定进程名，换月只换合约代码、不改进程名。
 STRATEGIES: list[dict[str, Any]] = [
     {
         "name": "螺纹钢趋势",
-        "instrument": "rb2601",
-        "platform": "qmt",
-        "market": "CN_FUT",
-        "description": "15 分钟级别黑色系趋势跟踪，夜盘连续持有。",
-        "instruments": [("rb2601", 3510.0)],
-        "qty_range": (2, 8),
-        "signal_seconds": (30, 45),
-        "long_bias": 0.7,
-        "initial_equity": 348000.0,
-        "messages": ["均线金叉", "突破前高", "回踩确认", "趋势止盈", "ATR 止损"],
+        "description": "黑色系 15 分钟级别趋势跟踪，夜盘连续持有。",
+        "processes": [
+            {
+                "instrument": "rb", "contract": "rb2601", "base_price": 3510.0, "report_nav": True,
+                "qty_range": (2, 8), "signal_seconds": (30, 45), "long_bias": 0.7,
+                "signals": ["均线金叉", "突破前高", "回踩确认", "趋势止盈", "ATR 止损"],
+                "messages": ["夜盘正常", "行情震荡", "等待突破"],
+            },
+        ],
     },
     {
         "name": "股指日内",
-        "instrument": "IF2612",
-        "platform": "ptrade",
-        "market": "CN_FUT",
         "description": "IF 日内动量，开盘后半小时入场，收盘前平仓。",
-        "instruments": [("IF2612", 3985.0)],
-        "qty_range": (1, 3),
-        "signal_seconds": (15, 25),
-        "long_bias": 0.55,
-        "initial_equity": 262000.0,
-        "messages": ["开盘动能", "日内新高", "动量衰减", "止损离场", "收盘前平仓"],
+        "processes": [
+            {
+                "instrument": "IF", "contract": "IF2612", "base_price": 3985.0, "report_nav": True,
+                "qty_range": (1, 3), "signal_seconds": (15, 25), "long_bias": 0.55,
+                "signals": ["开盘动能", "日内新高", "动量衰减", "止损离场", "收盘前平仓"],
+                "messages": ["盘中监控", "波动放大", "等待收盘"],
+            },
+        ],
     },
     {
         "name": "白银波段",
-        "instrument": "ag2601",
-        "platform": "myquant",
-        "market": "CN_FUT",
-        "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%。",
-        "instruments": [("ag2601", 7700.0), ("au2601", 625.0)],
-        "qty_range": (1, 5),
-        "signal_seconds": (20, 40),
-        "long_bias": 0.5,
-        "initial_equity": 166000.0,
-        "messages": ["贵金属走强", "波段减仓", "止盈离场", "ATR 止损", "夜盘回补"],
+        "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%（ag / au 双进程）。",
+        "processes": [
+            {
+                "instrument": "ag", "contract": "ag2601", "base_price": 7700.0, "report_nav": True,
+                "qty_range": (1, 5), "signal_seconds": (20, 40), "long_bias": 0.5,
+                "signals": ["贵金属走强", "波段减仓", "止盈离场", "ATR 止损"],
+                "messages": ["夜盘回补", "金银比修复"],
+            },
+            {
+                "instrument": "au", "contract": "au2601", "base_price": 625.0,
+                "qty_range": (1, 3), "signal_seconds": (25, 45), "long_bias": 0.5,
+                "signals": ["金价新高", "波段止盈", "避险升温"],
+                "messages": ["贵金属监控"],
+            },
+        ],
     },
 ]
 
@@ -118,32 +121,34 @@ def login(url: str, password: str) -> str:
 
 
 def ensure_runners(url: str, session: str) -> dict[str, dict[str, Any]]:
-    """按名字复用或创建三个策略，返回 name -> runner。"""
+    """按名字复用或创建三个策略组，返回 name -> runner。"""
     items = _request(url, "GET", "/api/v1/runners", token=session)["items"]
     by_name = {item["name"]: item for item in items}
     runners: dict[str, dict[str, Any]] = {}
     for spec in STRATEGIES:
         runner = by_name.get(spec["name"])
         if runner is None:
-            runner = _request(
+            created = _request(
                 url, "POST", "/api/v1/runners",
-                {
-                    "name": spec["name"], "platform": spec["platform"], "market": spec["market"],
-                    "description": spec["description"],
-                },
+                {"name": spec["name"], "description": spec["description"]},
                 token=session,
-            )["runner"]
-            print(f"创建策略 {spec['name']}（{spec['platform']} / {spec['market']}）")
+            )
+            runner = created.get("runner") or created
+            print(f"创建策略 {spec['name']}")
         else:
-            print(f"复用策略 {spec['name']}（{runner['platform']} / {runner['market']}）")
+            print(f"复用策略 {spec['name']}")
         runners[spec["name"]] = runner
     return runners
 
 
-def _token_alive(url: str, token: str) -> bool:
-    """发一次空心跳探测令牌是否仍然有效。"""
+def _token_alive(url: str, token: str, instrument: str) -> bool:
+    """带 instrument 发一次空心跳，探测令牌是否仍然有效（不产生“主账户”幽灵进程）。"""
     try:
-        _request(url, "POST", "/api/v1/report", {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds")}, token)
+        _request(
+            url, "POST", "/api/v1/report",
+            {"ts": datetime.now().astimezone().isoformat(timespec="milliseconds"), "instrument": instrument},
+            token,
+        )
     except RuntimeError:
         return False
     return True
@@ -164,35 +169,6 @@ def _save_token_cache(cache: dict[str, Any]) -> None:
     temp.replace(TOKENS_PATH)
 
 
-
-
-def _backfill_history(url: str, session: str, token: str, runner: dict[str, Any], spec: dict[str, Any]) -> None:
-    """首次运行时通过 /report 补齐 180 天日线权益，便于总览/详情立即看到风险指标。"""
-    detail = _request(url, "GET", "/api/v1/runners/" + str(runner["id"]), token=session)
-    if len(detail.get("equity") or []) >= 100:
-        return
-    target = float(spec["initial_equity"])
-    rnd = random.Random("history-" + spec["name"])
-    values = [target * 0.78]
-    for _ in range(179):
-        values.append(values[-1] * (1 + rnd.gauss(0.0018, 0.007)))
-    scale = target / values[-1]
-    values = [round(value * scale, 2) for value in values]
-    now = datetime.now().astimezone()
-    base = values[0]
-    for index, value in enumerate(values):
-        day = now - timedelta(days=179 - index)
-        point_time = day.replace(hour=15, minute=0, second=0, microsecond=0)
-        if point_time > now:
-            point_time = now - timedelta(minutes=1)
-        ts = point_time.isoformat(timespec="seconds")
-        _request(url, "POST", "/api/v1/report", {
-            "ts": ts, "equity": value, "instrument": spec["instrument"],
-            "pnl": round(value - base, 2),
-            "nav": round(value / base, 6),
-        }, token)
-    print(f"补齐历史权益 {spec['name']}：{len(values)} 天，当前 {target:,.2f} CNY")
-
 def ensure_tokens(url: str, session: str, runners: dict[str, dict[str, Any]]) -> dict[str, str]:
     """复用 data/sim_tokens.json 中有效的令牌，缺失或失效则重新创建；返回 name -> token。"""
     cache = _load_token_cache()
@@ -203,24 +179,23 @@ def ensure_tokens(url: str, session: str, runners: dict[str, dict[str, Any]]) ->
         runner = runners[spec["name"]]
         cached = cached_strategies.get(spec["name"]) or {}
         token = str(cached.get("token") or "")
-        if token and cached.get("runner_id") == runner["id"] and _token_alive(url, token):
+        probe_instrument = str(spec["processes"][0]["instrument"])
+        if token and cached.get("runner_id") == runner["id"] and _token_alive(url, token, probe_instrument):
             tokens[spec["name"]] = token
             print(f"复用令牌 {spec['name']}（{token[:7]}…{token[-4:]}）")
             continue
         created = _request(
             url, "POST", "/api/v1/tokens",
-            {
-                "name": spec["name"] + " · 模拟器",
-                "runner_id": runner["id"],
-                "platform": spec["platform"],
-                "markets": [spec["market"]],
-                "note": "sim/run.py 自动创建",
-            },
+            {"name": spec["name"] + " · 模拟器", "runner_id": runner["id"]},
             token=session,
         )
-        tokens[spec["name"]] = str(created["token"])
-        cached_strategies[spec["name"]] = {"runner_id": runner["id"], "token": created["token"]}
-        print(f"创建令牌 {spec['name']}（{created['record']['token_prefix']}）")
+        token = str(created.get("token") or (created.get("record") or {}).get("token") or "")
+        if not token:
+            raise RuntimeError("创建令牌失败：响应缺少 token 字段")
+        tokens[spec["name"]] = token
+        cached_strategies[spec["name"]] = {"runner_id": runner["id"], "token": token}
+        prefix = (created.get("record") or {}).get("token_prefix") or (token[:7] + "…" + token[-4:])
+        print(f"创建令牌 {spec['name']}（{prefix}）")
 
     _save_token_cache({
         "url": url,
@@ -231,30 +206,34 @@ def ensure_tokens(url: str, session: str, runners: dict[str, dict[str, Any]]) ->
     return tokens
 
 
-# ---------- 模拟线程 ----------
+# ---------- 模拟进程 ----------
 
 def _emit_signal(
-    q: Qwatch, spec: dict[str, Any], position: tuple[str, int] | None, rnd: random.Random
+    q: Qwatch,
+    label: str,
+    process: dict[str, Any],
+    position: tuple[str, int] | None,
+    rnd: random.Random,
 ) -> tuple[str, int] | None:
-    """按当前持仓状态生成一个合理信号，返回更新后的持仓。"""
-    code, base_price = rnd.choice(spec["instruments"])
-    price = round(base_price * (1 + rnd.uniform(-0.012, 0.012)), 2)
+    """按当前持仓状态生成一个信号（只调 signal，不发 equity/pnl），返回更新后的持仓。"""
+    contract = process["contract"]
+    price = round(process["base_price"] * (1 + rnd.uniform(-0.012, 0.012)), 2)
     if position is None:
-        direction = "long" if rnd.random() < spec["long_bias"] else "short"
+        direction = "long" if rnd.random() < process["long_bias"] else "short"
         action = "open"
-        qty = rnd.randint(*spec["qty_range"])
+        qty = rnd.randint(*process["qty_range"])
     else:
         direction, held = position
         roll = rnd.random()
         if roll < 0.4:
             action, qty = "close", held
         elif roll < 0.7:
-            action, qty = "add", rnd.randint(*spec["qty_range"])
+            action, qty = "add", rnd.randint(*process["qty_range"])
         else:
             action, qty = "reduce", max(1, held // 2)
 
-    q.signal(code, direction, action, qty, price=price, msg=rnd.choice(spec["messages"]))
-    print(f"[{spec['name']}] {code} {direction}/{action} {qty} @ {price}")
+    q.signal(contract, direction, action, qty, price=price, msg=rnd.choice(process["signals"]))
+    print(f"[{label}] 信号 {contract} {direction}/{action} {qty} @ {price}")
 
     if action == "open":
         return direction, qty
@@ -266,61 +245,58 @@ def _emit_signal(
     return None
 
 
-def _run_strategy(spec: dict[str, Any], url: str, token: str, stop: threading.Event) -> None:
-    """一个策略一个线程：每 10s tick，每 30s 自动心跳，每 15~45s 信号，定期权益。"""
-    rnd = random.Random(f"{spec['name']}-{time.time_ns()}")
+def _run_process(
+    strategy: dict[str, Any], process: dict[str, Any], url: str, token: str, stop: threading.Event
+) -> None:
+    """一个进程一个 Qwatch：tick 每轮调用，自动心跳 30s，按各自节奏发 msg / signal。"""
+    label = strategy["name"] + "/" + process["instrument"]
+    rnd = random.Random(f"{label}-{time.time_ns()}")
     try:
-        q = Qwatch(url, token, heartbeat=HEARTBEAT_S, instrument=str(spec["instrument"]))
+        q = Qwatch(url, token, heartbeat=HEARTBEAT_S, instrument=process["instrument"], log_dir=str(LOG_DIR))
     except AuthError as exc:
-        print(f"[{spec['name']}] 令牌无效，线程退出：{exc}")
+        print(f"[{label}] 令牌无效，进程退出：{exc}")
         return
 
-    extras: list[Qwatch] = []
-    for code, _price in spec["instruments"][1:]:
-        try:
-            extras.append(Qwatch(url, token, heartbeat=HEARTBEAT_S, instrument=code))
-        except AuthError:
-            pass
-
-    equity = float(spec["initial_equity"])
-    pnl_base = float(spec["initial_equity"]) * 0.78
-    q.report(equity=round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
+    loops = signal_count = msg_count = 0
     position: tuple[str, int] | None = None
-    loops = signal_count = 0
-    next_signal = time.monotonic() + rnd.uniform(*spec["signal_seconds"])
-    next_equity = time.monotonic() + rnd.uniform(10, 20)
+    next_signal = time.monotonic() + rnd.uniform(*process["signal_seconds"])
     next_msg = time.monotonic() + rnd.uniform(20, 40)
+    nav = 1.0
+    next_nav = time.monotonic() + rnd.uniform(10, 20)
     try:
         while not stop.is_set():
             loops += 1
             q.tick()
-            for extra in extras:
-                extra.tick()
             now = time.monotonic()
             if now >= next_signal:
-                position = _emit_signal(q, spec, position, rnd)
+                position = _emit_signal(q, label, process, position, rnd)
                 signal_count += 1
-                next_signal = now + rnd.uniform(*spec["signal_seconds"])
-            if now >= next_equity:
-                equity = max(1.0, equity * (1 + rnd.gauss(0, 0.001)))
-                q.report(equity=round(equity, 2), pnl=round(equity - pnl_base, 2), nav=round(equity / pnl_base, 6))
-                next_equity = now + rnd.uniform(10, 20)
+                next_signal = now + rnd.uniform(*process["signal_seconds"])
             if now >= next_msg:
-                q.report(msg=rnd.choice(spec["messages"]))
+                text = rnd.choice(process["messages"])
+                q.msg(text)
+                msg_count += 1
+                print(f"[{label}] 动态 {text}")
                 next_msg = now + rnd.uniform(30, 60)
+            if now >= next_nav and process.get("report_nav"):
+                nav = max(0.01, nav * (1 + rnd.gauss(0.0004, 0.0015)))
+                q.nav(round(nav, 6))
+                print(f"[{label}] 净值 {nav:.4f}")
+                next_nav = now + rnd.uniform(20, 40)
             stop.wait(TICK_S)
     finally:
         q.close()
-        for extra in extras:
-            extra.close()
         stats = q.stats
-        print(f"[{spec['name']}] 已停止：loop={loops} 信号={signal_count} 上报={stats['sent']} 失败={stats['failed']}")
+        print(
+            f"[{label}] 已停止：loop={loops} 信号={signal_count} 动态={msg_count} "
+            f"上报={stats['sent']} 失败={stats['failed']} 重试={stats['retried']}"
+        )
 
 
 # ---------- 入口 ----------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="qwatch 三策略模拟器")
+    parser = argparse.ArgumentParser(description="qwatch v0.2 三策略模拟器")
     parser.add_argument("--duration", type=float, default=0.0, help="运行秒数，0 表示一直运行到 Ctrl+C（便于自测）")
     args = parser.parse_args()
 
@@ -331,24 +307,33 @@ def main() -> int:
         session = login(url, password)
         runners = ensure_runners(url, session)
         tokens = ensure_tokens(url, session, runners)
-        for spec in STRATEGIES:
-            _backfill_history(url, session, tokens[spec["name"]], runners[spec["name"]], spec)
     except RuntimeError as exc:
         print(f"启动失败：{exc}")
         return 1
 
     stop = threading.Event()
+    tasks = [
+        (spec, process)
+        for spec in STRATEGIES
+        for process in spec["processes"]
+    ]
     threads = [
         threading.Thread(
-            target=_run_strategy, args=(spec, url, tokens[spec["name"]], stop),
-            name="sim-" + spec["name"], daemon=True,
+            target=_run_process, args=(spec, process, url, tokens[spec["name"]], stop),
+            name=f"sim-{spec['name']}-{process['instrument']}", daemon=True,
         )
-        for spec in STRATEGIES
+        for spec, process in tasks
     ]
     try:
         for thread in threads:
             thread.start()
-        print(f"模拟已启动（{len(threads)} 个策略，心跳 {HEARTBEAT_S}s，tick {TICK_S}s）；Ctrl+C 退出。")
+        print(
+            f"模拟已启动：{len(STRATEGIES)} 个策略 / {len(tasks)} 个进程"
+            f"（心跳 {HEARTBEAT_S}s，tick {TICK_S}s）；Ctrl+C 退出。"
+        )
+        for spec in STRATEGIES:
+            names = "、".join(process["instrument"] for process in spec["processes"])
+            print(f"  {spec['name']}：{names}")
         if args.duration > 0:
             stop.wait(args.duration)
             print(f"运行满 {args.duration:.0f}s，开始退出 ...")

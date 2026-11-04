@@ -1,9 +1,9 @@
+// StatusDot.vue — 状态点：running 绿 / degraded 黄 / offline 红 / paused·retired 灰。
 <script setup lang="ts">
-// StatusDot.vue — 状态点：running 绿 / degraded 黄 / offline 红 / off_hours 灰，带同色光晕。
 import { computed } from 'vue';
-import type { RunnerStatus } from '@/api/types';
+import type { ProcessStatus, RunnerStatus } from '@/api/types';
 
-const props = withDefaults(defineProps<{ status: RunnerStatus | 'ok' | 'warn' | 'error'; pulse?: boolean; size?: number }>(), {
+const props = withDefaults(defineProps<{ status: RunnerStatus | ProcessStatus | 'ok' | 'warn' | 'error'; pulse?: boolean; size?: number }>(), {
   pulse: false,
   size: 8,
 });
@@ -12,8 +12,8 @@ const color = computed(() => {
     case 'running': return '#2ecc8f';
     case 'degraded': return '#f5a524';
     case 'offline': return '#f04438';
-    case 'off_hours': return '#f5a524';
     case 'paused': return '#8b97ab';
+    case 'retired': return '#5b667a';
     case 'ok': return '#2ecc8f';
     case 'warn': return '#f5a524';
     default: return '#f04438';

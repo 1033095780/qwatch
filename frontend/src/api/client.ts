@@ -1,10 +1,9 @@
-// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记。
+// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记（v0.2）。
 import { reactive } from 'vue';
 import type {
-  Alert, AlertsResponse, AlertStatus, Market, Overview, Position, RangeKey,
-  LoginResponse, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, SettingsPatch, SignalQuery,
-  SignalsResponse, StrategyToken, TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
-  ListResponse,
+  Alert, AlertsResponse, AlertStatus, ChannelPatch, ListResponse, LoginResponse, Overview, ProcessInfo,
+  Runner, RunnerCreateRequest, RunnerDetail, SettingsData, StrategyToken, TestChannelResult, TokenCreateRequest,
+  TokenCreateResult, TokensResponse, User,
 } from './types';
 
 const API_BASE = '/api/v1';
@@ -46,7 +45,7 @@ export class ApiError extends Error {
   }
 }
 
-/** 全局请求元信息：顶部「x 秒前更新」与加载态使用 */
+/** 全局请求元信息：顶栏「x 秒前更新」与加载态使用 */
 export const apiMeta = reactive({ pending: 0, lastResponseAt: Date.now() });
 
 function qs(params: Record<string, string | number | undefined | null> = {}): string {
@@ -104,40 +103,31 @@ export const api = {
   logout() {
     return request<{ ok: boolean }>('/auth/logout', { method: 'POST' });
   },
-  overview(range: RangeKey = 'all') {
-    return request<Overview>('/overview' + qs({ range }));
+  overview() {
+    return request<Overview>('/overview');
   },
-  runners(params: { status?: string; market?: string; q?: string } = {}) {
+  runners(params: { status?: string; q?: string } = {}) {
     return request<ListResponse<Runner>>('/runners' + qs(params));
   },
-  runner(id: string, range: RangeKey = 'all') {
-    return request<RunnerDetail>('/runners/' + encodeURIComponent(id) + qs({ range }));
+  runner(id: string) {
+    return request<RunnerDetail>('/runners/' + encodeURIComponent(id));
   },
   createRunner(body: RunnerCreateRequest) {
     return request<{ runner: Runner }>('/runners', { method: 'POST', body: JSON.stringify(body) });
   },
-  signals(query: SignalQuery = {}) {
-    return request<SignalsResponse>('/signals' + qs(query as Record<string, string | number | undefined>));
+  pauseRunner(id: string) {
+    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(id) + '/pause', { method: 'POST' });
   },
-  tokens(params: { runner_id?: string } = {}) {
-    return request<TokensResponse>('/tokens' + qs(params));
+  resumeRunner(id: string) {
+    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(id) + '/resume', { method: 'POST' });
   },
-  createToken(body: TokenCreateRequest) {
-    return request<TokenCreateResult>('/tokens', { method: 'POST', body: JSON.stringify(body) });
+  retireProcess(runnerId: string, name: string) {
+    return request<{ process: ProcessInfo }>('/runners/' + encodeURIComponent(runnerId) + '/processes/' + encodeURIComponent(name) + '/retire', { method: 'POST' });
   },
-  revokeToken(id: string) {
-    return request<{ record: StrategyToken }>('/tokens/' + encodeURIComponent(id) + '/revoke', { method: 'POST' });
+  activateProcess(runnerId: string, name: string) {
+    return request<{ process: ProcessInfo }>('/runners/' + encodeURIComponent(runnerId) + '/processes/' + encodeURIComponent(name) + '/activate', { method: 'POST' });
   },
-  pauseRunner(runnerId: string) {
-    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(runnerId) + '/pause', { method: 'POST' });
-  },
-  resumeRunner(runnerId: string) {
-    return request<{ runner: Runner }>('/runners/' + encodeURIComponent(runnerId) + '/resume', { method: 'POST' });
-  },
-  positions(params: { account_id?: string } = {}) {
-    return request<ListResponse<Position>>('/positions' + qs(params));
-  },
-  alerts(status: Exclude<AlertStatus, 'firing'> | 'active' | 'history' = 'active') {
+  alerts(status: 'active' | 'history' = 'active') {
     return request<AlertsResponse>('/alerts' + qs({ status }));
   },
   ackAlert(id: string) {
@@ -149,10 +139,19 @@ export const api = {
       body: JSON.stringify({ duration }),
     });
   },
+  tokens(params: { runner_id?: string } = {}) {
+    return request<TokensResponse>('/tokens' + qs(params));
+  },
+  createToken(body: TokenCreateRequest) {
+    return request<TokenCreateResult>('/tokens', { method: 'POST', body: JSON.stringify(body) });
+  },
+  revokeToken(id: string) {
+    return request<{ record: StrategyToken }>('/tokens/' + encodeURIComponent(id) + '/revoke', { method: 'POST' });
+  },
   settings() {
     return request<SettingsData>('/settings');
   },
-  saveSettings(patch: SettingsPatch) {
+  saveSettings(patch: { channels?: ChannelPatch[] }) {
     return request<SettingsData>('/settings', { method: 'PUT', body: JSON.stringify(patch) });
   },
   testChannel(id: string) {
@@ -160,4 +159,4 @@ export const api = {
   },
 };
 
-export type { Market };
+export { API_BASE, TOKEN_KEY };

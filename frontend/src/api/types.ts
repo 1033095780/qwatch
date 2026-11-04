@@ -1,13 +1,14 @@
-// api/types.ts — API 契约类型。
-export type Market = 'CN_A' | 'CN_FUT' | 'HK' | 'US' | 'CRYPTO' | 'FX';
-export type Platform = 'ptrade' | 'qmt' | 'myquant' | 'tqsdk' | 'custom';
-export type StrategyType = 'trend' | 'arbitrage' | 'intraday' | 'grid' | 'multifactor' | 'market_making' | 'other';
-export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'off_hours' | 'paused';
-export type Severity = 'P0' | 'P1' | 'P2';
+// api/types.ts — qwatch v0.2 API 契约类型（docs/V02-CONTRACT.md）。
+// 定位：可信看门狗。策略 token = 策略组；instrument = 稳定进程名；无 PnL/净值/收益/风险/账户/日历。
+
+export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'paused';
+/** 进程状态：与策略状态同构；retired 表示已停用（不参与存活判定） */
+export type ProcessStatus = RunnerStatus | 'retired';
 export type AlertStatus = 'firing' | 'acknowledged' | 'resolved';
-export type SignalSide = 'buy' | 'sell';
+export type AlertRule = 'heartbeat_lost' | 'runner_stalled';
+export type EventType = 'message' | 'signal';
+export type SignalDirection = 'long' | 'short';
 export type SignalAction = 'open' | 'close' | 'add' | 'reduce';
-export type RangeKey = '1d' | '1w' | '1m' | '3m' | '1y' | 'all';
 export type UpColorScheme = 'red_up' | 'green_up';
 
 export interface User {
@@ -18,244 +19,89 @@ export interface User {
 export interface LoginResponse {
   token: string;
   user: User;
-  demo?: boolean;
 }
 
-export interface RunnerAccount {
-  id: string;
-  name: string;
-  venue: string;
-}
-
-export interface RunnerCreateRequest {
-  name: string;
-  platform?: string;
-  market?: string;
-  description?: string;
-}
-
-export interface InstrumentInfo {
-  name: string;
-  status: RunnerStatus;
-  last_seen: string;
-  equity: string | null;
-  pnl: string | null;
-  nav: string | null;
-}
-
+/** GET /runners 列表项（策略组） */
 export interface Runner {
   id: string;
   name: string;
-  strategy: string;
-  version: string;
   description: string;
-  market: Market;
-  venue: string;
-  platform: Platform;
-  platform_label: string;
-  strategy_type: StrategyType;
-  strategy_type_label: string;
-  tags: string[];
   status: RunnerStatus;
-  instruments: InstrumentInfo[];
-  instrument_count: number;
-  online_instruments: number;
-  accounts: RunnerAccount[];
-  equity: string;
-  today_pnl: string;
-  today_pnl_pct: string;
-  total_return_pct: string;
-  total_pnl: string;
-  max_drawdown_pct: string;
-  sharpe: string;
-  profit_factor: string;
-  win_rate_pct: string;
-  heartbeat_bars?: ('ok' | 'miss' | 'off')[];
-  uptime_24h: string;
-  last_heartbeat: string;
-  last_msg: string;
-  sparkline: number[];
-  position_count: number;
+  /** 进程总数 / 在线进程数（契约字段 process_count / online_processes） */
+  process_count: number;
+  online_processes: number;
+  last_seen: string | null;
+  last_msg: string | null;
+  nav?: string | null;
+  nav_updated_at?: string | null;
+  nav_sparkline?: number[];
+  /** 以下为可选的展示辅助字段，后端未提供时前端不显示 */
+  created_at?: string | null;
 }
 
-export interface Signal {
-  id: string;
+/** GET /runners/{id} 中的进程 */
+export interface ProcessInfo {
+  name: string;
+  status: ProcessStatus;
+  last_seen: string | null;
+  loop: number | null;
+  retired: boolean;
+}
+
+/** GET /runners/{id} 中的动态：message + signal 合并 */
+export interface RunnerEvent {
+  id: string | number;
   ts: string;
-  runner_id: string;
-  runner_name: string;
-  platform: Platform | '';
-  platform_label: string;
-  strategy_type: StrategyType | '';
-  strategy_type_label: string;
-  market: Market;
-  market_label: string;
-  account_id: string;
-  account_name: string;
+  type: EventType;
   instrument: string;
-  instrument_name: string;
-  side: SignalSide;
-  action: SignalAction;
-  direction?: 'long' | 'short';
-  msg?: string;
-  price: string;
-  qty: string;
-  amount: string;
-  tags: string[];
+  runner_id?: string;
+  runner_name?: string;
+  text?: string;
+  symbol?: string;
+  direction?: SignalDirection;
+  action?: SignalAction;
+  qty?: number | string;
+  price?: number | string | null;
+  amount?: number | string | null;
 }
 
 export interface Alert {
   id: string;
-  fingerprint: string;
-  rule: string;
-  severity: Severity;
+  rule: AlertRule | string;
   status: AlertStatus;
   runner_id: string;
   runner_name: string;
+  /** 摘要列出进程名（heartbeat_lost / runner_stalled 按策略组汇总一条） */
   summary: string;
   starts_at: string;
   ends_at?: string | null;
   acked_at?: string | null;
-  labels: Record<string, string>;
-  updated_at: string;
-}
-
-export interface StrategyMessage {
-  id: number;
-  ts: string;
-  instrument: string;
-  text: string;
-  level: 'notice' | 'warning';
-}
-
-export interface EquityPoint {
-  ts: string;
-  nav: number;
-  value: string;
-}
-
-export interface OverviewCurvePoint {
-  ts: string;
-  value: string;
-  nav?: number;
-}
-
-/** 组合/策略风险指标：后端两位小数字符串，收益率相关字段单位为 % */
-export interface OverviewMetrics {
-  total_return_pct: string;
-  max_drawdown_pct: string;
-  sharpe: string;
-  annualized_return_pct: string;
-  calmar: string;
-  volatility: string;
-  profit_factor: string;
-}
-
-export interface Overview {
-  as_of: string;
-  total_equity: string;
-  today_pnl: string;
-  today_pnl_pct: string;
-  running: number;
-  total: number;
-  active_alerts: number;
-  range: RangeKey;
-  equity_curve: OverviewCurvePoint[];
-  pnl_curve: OverviewCurvePoint[];
-  nav_curve: OverviewCurvePoint[];
-  drawdown_curve: DrawdownPoint[];
-  metrics: OverviewMetrics;
-  benchmark: OverviewCurvePoint[];
-  runners: Runner[];
-  alerts: Alert[];
-  recent_signals: Signal[];
-}
-
-export interface Position {
-  account_id?: string;
-  runner_id?: string;
-  runner_name?: string;
-  instrument: string;
-  instrument_name: string;
-  market: Market;
-  venue?: string;
-  qty: string;
-  avg_price: string;
-  last_price: string;
-  market_value: string;
-  pnl: string;
-  pnl_pct: string;
-  currency: string;
-}
-
-export interface DrawdownPoint {
-  ts: string;
-  value: number;
-}
-
-export interface HeartbeatSegment {
-  ts: string;
-  status: 'ok' | 'miss' | 'off';
-}
-
-export interface Outage {
-  start: string;
-  end: string | null;
-  duration_s: number;
+  labels?: Record<string, string>;
+  updated_at?: string;
 }
 
 export interface RunnerDetail {
   runner: Runner;
-  range: RangeKey;
-  metrics: {
-    total_return_pct: string;
-    total_pnl: string;
-    annualized_return_pct: string;
-    today_pnl: string;
-    max_drawdown_pct: string;
-    sharpe: string;
-    win_rate_pct: string;
-    profit_factor: string;
-    calmar: string;
-    volatility: string;
-    uptime_30d: string;
-  };
-  equity: EquityPoint[];
-  pnl_curve: EquityPoint[];
-  nav_curve: EquityPoint[];
-  drawdown: DrawdownPoint[];
-  heartbeat_timeline: HeartbeatSegment[];
-  outages: Outage[];
-  signals: Signal[];
-  messages: StrategyMessage[];
-  positions: Position[];
+  processes: ProcessInfo[];
+  events: RunnerEvent[];
   alerts: Alert[];
-  config: {
-    strategy: string;
-    version: string;
-    host: string;
-    pid: number;
-    calendar_id: string;
-    heartbeat_interval_s: number;
-    soft_timeout_s: number;
-    hard_timeout_s: number;
-    started_at: string;
-    last_seq: number;
-    env: string;
-    accounts: string[];
-  };
+  nav_curve?: { ts: string; value: string }[];
+}
+
+export interface Overview {
+  running: number;
+  total: number;
+  active_alerts: number;
+  processes_total: number;
+  processes_online: number;
+  recent_alerts: Alert[];
+  recent_events?: RunnerEvent[];
+  runners: Runner[];
 }
 
 export interface ListResponse<T> {
   items: T[];
   total?: number;
-}
-
-export interface SignalsResponse {
-  items: Signal[];
-  total: number;
-  sum_amount: string;
-  limit: number;
-  next_cursor: string | null;
 }
 
 export interface AlertsResponse {
@@ -266,12 +112,11 @@ export interface AlertsResponse {
 export interface Channel {
   id: string;
   name: string;
-  type: 'dingtalk_robot';
+  type?: 'dingtalk_robot';
   enabled: boolean;
   webhook_masked: string;
   secret_masked: string;
-  at_mobiles: string[];
-  rate_limit_per_min: number;
+  rate_limit_per_min?: number;
   last_test_at: string | null;
   last_test_ok: boolean | null;
 }
@@ -281,20 +126,29 @@ export interface ChannelPatch {
   enabled?: boolean;
   webhook?: string;
   secret?: string;
-  at_mobiles?: string[];
+}
+
+export interface SettingsData {
+  channels: Channel[];
+}
+
+export interface TestChannelResult {
+  ok: boolean;
+  channel_id: string;
+  message: string;
+  latency_ms?: number;
+  at?: string;
+}
+
+export interface RunnerCreateRequest {
+  name: string;
+  description?: string;
 }
 
 export interface StrategyToken {
   id: string;
   runner_id: string | null;
   name: string;
-  platform: Platform | '';
-  platform_label: string;
-  markets: Market[];
-  strategy_type: StrategyType | '';
-  strategy_type_label: string;
-  tags: string[];
-  note: string;
   token_prefix: string;
   status: 'active' | 'revoked';
   created_at: string;
@@ -304,17 +158,12 @@ export interface StrategyToken {
 
 export interface TokensResponse {
   items: StrategyToken[];
-  total: number;
+  total?: number;
 }
 
 export interface TokenCreateRequest {
   name: string;
   runner_id?: string;
-  platform?: Platform | '';
-  markets?: Market[];
-  strategy_type?: StrategyType | '';
-  tags?: string[];
-  note?: string;
 }
 
 export interface TokenCreateResult {
@@ -322,55 +171,10 @@ export interface TokenCreateResult {
   record: StrategyToken;
 }
 
-export interface TradingCalendar {
-  id: string;
-  name: string;
-  timezone: string;
-  sessions: string[];
-  night: boolean;
-  holidays: string;
+/** SSE 事件：GET /api/v1/stream（Authorization: Bearer） */
+export interface StreamEvent {
+  /** 契约事件名：alert.firing / alert.resolved / alert.updated / process.updated / event.message / event.signal；兼容服务端仅发 data 时由 data.type 推断 */
+  type: string;
+  /** 事件原始负载（已 JSON.parse；无法解析时为字符串） */
+  data: unknown;
 }
-
-export interface SettingsData {
-  user: User & { timezone?: string };
-  up_color_scheme: UpColorScheme;
-  channels: Channel[];
-  calendars: TradingCalendar[];
-  security: {
-    session_hours: number;
-    login_rate_limit: string;
-    totp_enabled: boolean;
-    last_password_change: string;
-  };
-  about: { version: string; build: string; mode: string; license: string };
-}
-
-export interface TestChannelResult {
-  ok: boolean;
-  channel_id: string;
-  message: string;
-  latency_ms: number;
-  at: string;
-}
-
-export interface SignalQuery {
-  runner_id?: string;
-  account_id?: string;
-  platform?: string;
-  market?: string;
-  strategy_type?: string;
-  side?: string;
-  status?: string;
-  instrument?: string;
-  tag?: string;
-  from?: string;
-  to?: string;
-  cursor?: number | string;
-  limit?: number;
-}
-
-export type SettingsPatch = {
-  up_color_scheme?: UpColorScheme;
-  channels?: ChannelPatch[];
-  security?: Partial<SettingsData['security']>;
-};

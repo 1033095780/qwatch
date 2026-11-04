@@ -52,8 +52,8 @@ async function submit(): Promise<void> {
     <div class="login-shell">
       <section class="brand-panel">
         <BrandMark size="lg" />
-        <h1 class="headline">多策略多市场<br />监控工作台</h1>
-        <p class="lede">净值、交易与策略存活，一屏掌握。</p>
+        <h1 class="headline">策略进程存活<br />可信看门狗</h1>
+        <p class="lede">心跳、进程与 P0 告警，一屏掌握。</p>
       </section>
 
       <section class="form-panel">

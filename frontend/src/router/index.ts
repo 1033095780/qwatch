@@ -1,4 +1,4 @@
-// router/index.ts — 登录、业务 9 页、404；/trades 旧链接重定向到 /signals；未登录守卫带 next 回跳。
+// router/index.ts — v0.2：4 个一级页面（总览/策略/告警/设置）+ 策略详情 + 登录/404；旧链接重定向。
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -33,13 +33,14 @@ const router = createRouter({
           path: 'strategies/:id', name: 'strategy-detail', component: () => import('@/views/StrategyDetail.vue'),
           meta: { title: '策略详情', parent: { title: '策略', to: '/strategies' } },
         },
+        { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警' } },
+        { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
+        // v0.2 删除的信号/账户/报告等旧页面：保留重定向，避免旧书签 404
+        { path: 'signals', redirect: '/overview' },
+        { path: 'trades', redirect: '/overview' },
         { path: 'accounts', redirect: '/strategies' },
         { path: 'accounts/:id', redirect: '/strategies' },
-        { path: 'signals', name: 'signals', component: () => import('@/views/Signals.vue'), meta: { title: '交易信号' } },
-        { path: 'trades', redirect: (to) => ({ path: '/signals', query: to.query }) },
-        { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警中心' } },
         { path: 'reports', redirect: '/overview' },
-        { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
       ],
     },
     {

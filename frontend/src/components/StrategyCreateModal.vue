@@ -1,13 +1,12 @@
+// StrategyCreateModal.vue — 新建策略组：创建策略并自动生成首个接入令牌（v0.2）。
 <script setup lang="ts">
-// StrategyCreateModal.vue — 新建策略：名称/市场/平台/简介，创建后自动生成接入令牌。
 import { computed, reactive, ref, watch } from 'vue';
-import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui';
+import { NButton, NForm, NFormItem, NInput, NModal, useMessage } from 'naive-ui';
 import type { FormInst, FormRules } from 'naive-ui';
 import { AlertTriangle, CheckCircle2, Copy } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { StrategyToken } from '@/api/types';
-import { PLATFORM_OPTIONS, TOKEN_MARKET_OPTIONS } from '@/utils/catalog';
-import { heartbeatCurl } from '@/utils/integration';
+import type { Runner, StrategyToken } from '@/api/types';
+import { reportCurl } from '@/utils/integration';
 
 const props = defineProps<{ show: boolean }>();
 const emit = defineEmits<{ 'update:show': [value: boolean]; created: [] }>();
@@ -15,23 +14,15 @@ const emit = defineEmits<{ 'update:show': [value: boolean]; created: [] }>();
 const message = useMessage();
 const formRef = ref<FormInst | null>(null);
 const submitting = ref(false);
-const result = ref<{ token: string; record: StrategyToken } | null>(null);
+const result = ref<{ runner: Runner; token: string; record: StrategyToken } | null>(null);
 
-const form = reactive({
-  name: '',
-  market: '',
-  platform: '',
-  description: '',
-});
+const form = reactive({ name: '', description: '' });
 
 const rules: FormRules = {
   name: { required: true, message: '策略名称必填', trigger: ['blur', 'input'] },
-  market: { required: true, message: '市场必填', trigger: ['blur', 'change'] },
-  platform: { required: true, message: '量化平台必填', trigger: ['blur', 'change'] },
 };
 
-const marketOptions = TOKEN_MARKET_OPTIONS;
-const preview = computed(() => (result.value ? heartbeatCurl(result.value.token, result.value.record.name) : ''));
+const preview = computed(() => (result.value ? reportCurl(result.value.token) : ''));
 
 function randomName(): string {
   return 'strategy-' + Math.random().toString(16).slice(2, 6);
@@ -40,8 +31,6 @@ function randomName(): string {
 watch(() => props.show, (visible) => {
   if (!visible) return;
   form.name = randomName();
-  form.market = '';
-  form.platform = '';
   form.description = '';
   result.value = null;
   formRef.value?.restoreValidation();
@@ -59,20 +48,10 @@ async function submit(): Promise<void> {
   }
   submitting.value = true;
   try {
-    const runnerRes = await api.createRunner({
-      name: form.name.trim(),
-      market: form.market.trim(),
-      platform: form.platform.trim(),
-      description: form.description.trim(),
-    });
+    const runnerRes = await api.createRunner({ name: form.name.trim(), description: form.description.trim() });
     const runner = runnerRes.runner;
-    result.value = await api.createToken({
-      runner_id: runner.id,
-      name: runner.name,
-      platform: runner.platform,
-      markets: [runner.market],
-      strategy_type: runner.strategy_type,
-    });
+    const tokenRes = await api.createToken({ runner_id: runner.id, name: runner.name });
+    result.value = { runner, token: tokenRes.token, record: tokenRes.record };
     emit('created');
     message.success('策略已创建，请保存接入令牌');
   } catch (err) {
@@ -103,19 +82,11 @@ async function copyToken(): Promise<void> {
     @update:show="emit('update:show', $event)"
   >
     <template v-if="!result">
-      <p class="modal-note">创建后立即生成接入令牌；策略保持「离线」，收到第一次心跳后自动上线。名称、市场、平台可直接填写，也可从常用项选择。</p>
+      <p class="modal-note">一个策略 = 一个接入令牌；同一策略下的多个进程使用同一个令牌上报，进程首次上报后自动出现，无需预先配置。</p>
       <n-form ref="formRef" :model="form" :rules="rules" label-placement="top" require-mark-placement="right-hanging">
         <n-form-item label="策略名称" path="name">
-          <n-input v-model:value="form.name" placeholder="如 螺纹钢趋势" maxlength="40" />
+          <n-input v-model:value="form.name" placeholder="如 螺纹钢趋势" maxlength="40" show-count />
         </n-form-item>
-        <div class="form-grid">
-          <n-form-item label="市场" path="market">
-            <n-select v-model:value="form.market" :options="marketOptions" filterable tag placeholder="选择或输入，如 期货" />
-          </n-form-item>
-          <n-form-item label="量化平台" path="platform">
-            <n-select v-model:value="form.platform" :options="PLATFORM_OPTIONS" filterable tag placeholder="选择或输入，如 QMT" />
-          </n-form-item>
-        </div>
         <n-form-item label="简介">
           <n-input
             v-model:value="form.description"
@@ -130,7 +101,7 @@ async function copyToken(): Promise<void> {
     </template>
 
     <template v-else>
-      <div class="result-head"><CheckCircle2 :size="16" /><span>{{ result.record.name }}</span></div>
+      <div class="result-head"><CheckCircle2 :size="16" /><span>{{ result.runner.name }}</span></div>
       <p class="result-label">接入令牌（只显示一次）</p>
       <div class="token-box mono">{{ result.token }}</div>
       <div class="warn">
@@ -139,7 +110,7 @@ async function copyToken(): Promise<void> {
       </div>
       <p class="result-label">接入示例（心跳）</p>
       <pre class="code-block mono">{{ preview }}</pre>
-      <p class="code-note">信号批量上报：POST /api/v1/report，同样使用该 Bearer Token。</p>
+      <p class="code-note">同一策略的每个进程都必须带自己的 instrument（如 rb / ag / IF）；消息与信号也走 POST /api/v1/report。</p>
     </template>
 
     <template #footer>
@@ -166,11 +137,6 @@ async function copyToken(): Promise<void> {
   font-size: 12px;
   color: var(--text-2);
   line-height: 1.7;
-}
-.form-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0 12px;
 }
 .result-head {
   display: flex;
@@ -215,11 +181,6 @@ async function copyToken(): Promise<void> {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-}
-@media (max-width: 639px) {
-  .form-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 .code-block {
   margin: 6px 0 0;

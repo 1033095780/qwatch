@@ -1,4 +1,4 @@
-// stores/settings.ts — 涨跌配色（红涨绿跌可切换）、侧栏折叠、全局刷新信号、设置页数据。
+// stores/settings.ts — 显示偏好（涨跌配色/侧栏折叠）、全局刷新信号、设置页渠道数据（v0.2）。
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/api/client';
@@ -58,23 +58,11 @@ export const useSettingsStore = defineStore('settings', () => {
     loading.value = true;
     error.value = '';
     try {
-      const res = await api.settings();
-      data.value = res;
-      if (res.up_color_scheme && res.up_color_scheme !== upColorScheme.value) applyScheme(res.up_color_scheme);
+      data.value = await api.settings();
     } catch (err) {
       error.value = err instanceof Error ? err.message : '设置加载失败';
     } finally {
       loading.value = false;
-    }
-  }
-
-  async function saveScheme(scheme: UpColorScheme): Promise<void> {
-    applyScheme(scheme);
-    try {
-      const res = await api.saveSettings({ up_color_scheme: scheme });
-      data.value = res;
-    } catch {
-      /* 本地偏好已生效；后端保存失败不阻塞 UI */
     }
   }
 
@@ -99,6 +87,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   return {
     upColorScheme, collapsed, refreshSeq, lastRefreshAt, data, loading, error, isGreenUp,
-    applyScheme, toggleCollapse, triggerRefresh, load, saveScheme, saveChannel, setChannelEnabled, testChannel,
+    applyScheme, toggleCollapse, triggerRefresh, load, saveChannel, setChannelEnabled, testChannel,
   };
 });

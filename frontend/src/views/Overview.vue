@@ -1,151 +1,87 @@
+// Overview.vue — v0.2 总览：存活汇总 + 策略组（可展开进程）+ 实时动态/告警；无任何收益/净值/风险数字。
 <script setup lang="ts">
-// Overview.vue — 总览：KPI 四卡、组合净值/回撤、组合指标、策略状态、最新信号、告警动态。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import { NButton } from 'naive-ui';
-import { Activity, Bell, ChevronDown, ChevronRight, ChevronUp, Wallet } from 'lucide-vue-next';
+import { Bell, ChevronRight, RefreshCw, Server, ShieldAlert, Waves } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Overview, RangeKey, RunnerDetail, Signal } from '@/api/types';
+import type { Overview, RunnerDetail } from '@/api/types';
+import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtDateTime, fmtMoney, fmtPct, fromNow, pnlClass } from '@/utils/format';
-import { MARKET_LABELS, SIGNAL_ACTION_LABELS } from '@/utils/catalog';
-import DrawdownChart from '@/components/DrawdownChart.vue';
-import EquityChart from '@/components/EquityChart.vue';
+import { fmtDateTime, fromNow } from '@/utils/format';
+import { ruleLabel } from '@/utils/catalog';
 import EmptyState from '@/components/EmptyState.vue';
-import HeartbeatMini from '@/components/HeartbeatMini.vue';
+import EventTimeline from '@/components/EventTimeline.vue';
+import GroupCard from '@/components/GroupCard.vue';
+import NavChart from '@/components/NavChart.vue';
 import PageHeader from '@/components/PageHeader.vue';
-import PnlText from '@/components/PnlText.vue';
-import RangeTabs from '@/components/RangeTabs.vue';
 import SectionCard from '@/components/SectionCard.vue';
-import SeverityTag from '@/components/SeverityTag.vue';
-import SideTag from '@/components/SideTag.vue';
 import StatusDot from '@/components/StatusDot.vue';
-import StatusTag from '@/components/StatusTag.vue';
 
 const settings = useSettingsStore();
+const realtime = useRealtimeStore();
+const router = useRouter();
 
 const data = ref<Overview | null>(null);
 const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
-const range = ref<RangeKey>('all');
-const scope = ref<string>('portfolio');
-const chartView = ref<'pnl' | 'nav'>('pnl');
-const metricsOpen = ref(true);
-const expandedGroups = ref<Set<string>>(new Set());
-const runnerDetail = ref<RunnerDetail | null>(null);
-const scopeLoading = ref(false);
-const showDrawdown = ref(localStorage.getItem('qwatch.overview.drawdown') !== '0');
-const latestSignal = ref<Signal | null>(null);
-const bannerVisible = ref(false);
-const flashSignalIds = ref<string[]>([]);
-let seenSignalIds = new Set<string>();
-let signalsInitialized = false;
+const lastLoadedAt = ref(Date.now());
+const selectedGroupId = ref('');
+const selectedDetail = ref<RunnerDetail | null>(null);
+const groupLoading = ref(false);
 let pollTimer: number | undefined;
-let flashTimer: number | undefined;
-let bannerTimer: number | undefined;
+let reloadTimer: number | undefined;
 
-const isPortfolio = computed(() => scope.value === 'portfolio');
-const activeRunner = computed(() => (isPortfolio.value ? null : data.value?.runners.find((r) => r.id === scope.value) ?? null));
-const chartPoints = computed(() => {
-  if (isPortfolio.value) {
-    return (chartView.value === 'pnl' ? data.value?.pnl_curve : data.value?.nav_curve) ?? [];
-  }
-  return (chartView.value === 'pnl' ? runnerDetail.value?.pnl_curve : runnerDetail.value?.nav_curve) ?? [];
-});
-const latestChartValue = computed(() => {
-  const points = chartPoints.value;
-  return points.length ? Number(points[points.length - 1].value) : null;
-});
-
-const activeAlertCount = computed(() => data.value?.active_alerts ?? 0);
-
-const periodPnl = computed(() => {
-  const curve = chartPoints.value;
-  if (curve.length < 2) return null;
-  return Number(curve[curve.length - 1].value) - Number(curve[0].value);
+const summary = computed(() => {
+  const ov = data.value;
+  if (!ov) return null;
+  const total = ov.total ?? 0;
+  const running = ov.running ?? 0;
+  const processesTotal = ov.processes_total ?? (ov.runners || []).reduce((sum, r) => sum + (r.process_count || 0), 0);
+  const processesOnline = ov.processes_online ?? (ov.runners || []).reduce((sum, r) => sum + (r.online_processes || 0), 0);
+  return {
+    total,
+    running,
+    abnormal: Math.max(0, total - running),
+    activeAlerts: ov.active_alerts ?? 0,
+    processesTotal,
+    processesOnline,
+  };
 });
 
-const periodReturn = computed(() => {
-  const curve = chartPoints.value;
-  if (curve.length < 2) return null;
-  const first = Number(curve[0].value);
-  const last = Number(curve[curve.length - 1].value);
-  return first > 0 ? ((last - first) / first) * 100 : null;
+const recentEvents = computed(() => {
+  const live = realtime.events;
+  const initial = data.value?.recent_events || [];
+  const ids = new Set(live.map((event) => String(event.id)));
+  return [...live, ...initial.filter((event) => !ids.has(String(event.id)))].slice(0, 8);
 });
+const recentAlerts = computed(() => (data.value?.recent_alerts || []).slice(0, 6));
+const selectedGroup = computed(() => data.value?.runners.find((runner) => runner.id === selectedGroupId.value) ?? null);
+const navValue = computed(() => selectedGroup.value?.nav ?? selectedDetail.value?.runner.nav ?? '—');
+const navUpdated = computed(() => selectedGroup.value?.nav_updated_at ?? selectedDetail.value?.runner.nav_updated_at ?? null);
+const navCurve = computed(() => selectedDetail.value?.nav_curve ?? []);
 
-/** 最大回撤统一带负号展示：后端返回绝对值百分比 */
-function fmtDrawdownPct(value: string | number | null | undefined): string {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return '—';
-  return (n > 0 ? '-' : '') + fmtPct(n, 2, false);
-}
-
-const currentMetrics = computed(() => (isPortfolio.value ? data.value?.metrics ?? null : runnerDetail.value?.metrics ?? null));
-const drawdownPoints = computed(() =>
-  isPortfolio.value ? data.value?.drawdown_curve ?? [] : runnerDetail.value?.drawdown ?? [],
-);
-const metricItems = computed(() => {
-  const metrics = currentMetrics.value;
-  if (!metrics) return [];
-  return [
-    { label: '年化收益', value: fmtPct(metrics.annualized_return_pct), tone: pnlClass(metrics.annualized_return_pct) },
-    { label: '最大回撤', value: fmtDrawdownPct(metrics.max_drawdown_pct), tone: 'is-flat' },
-    { label: '夏普', value: metrics.sharpe || '—', tone: 'is-flat' },
-    { label: '卡玛', value: metrics.calmar || '—', tone: 'is-flat' },
-    { label: '波动率', value: fmtPct(metrics.volatility, 2, false), tone: 'is-flat' },
-    { label: '盈亏比', value: metrics.profit_factor || '—', tone: 'is-flat' },
-  ];
-});
-
-async function loadRunner(): Promise<void> {
-  if (isPortfolio.value) return;
-  scopeLoading.value = true;
+async function loadGroupNav(id: string): Promise<void> {
+  if (!id) return;
+  groupLoading.value = true;
   try {
-    runnerDetail.value = await api.runner(scope.value, range.value);
+    selectedDetail.value = await api.runner(id);
+    selectedGroupId.value = id;
   } catch {
-    runnerDetail.value = null;
+    selectedDetail.value = null;
   } finally {
-    scopeLoading.value = false;
+    groupLoading.value = false;
   }
 }
 
-function clearSignalTimers(): void {
-  window.clearTimeout(flashTimer);
-  window.clearTimeout(bannerTimer);
-}
-
-function detectNewSignal(next: Overview): void {
-  const current = next.recent_signals;
-  if (!current.length) return;
-  const currentIds = new Set(current.map((signal) => signal.id));
-  if (!signalsInitialized) {
-    seenSignalIds = currentIds;
-    signalsInitialized = true;
-    return;
-  }
-  const newSignals = current.filter((signal) => !seenSignalIds.has(signal.id));
-  seenSignalIds = currentIds;
-  if (!newSignals.length) return;
-  latestSignal.value = current[0];
-  const flashing = new Set(flashSignalIds.value);
-  newSignals.forEach((signal) => flashing.add(signal.id));
-  flashSignalIds.value = [...flashing];
-  bannerVisible.value = true;
-  clearSignalTimers();
-  flashTimer = window.setTimeout(() => { flashSignalIds.value = []; }, 10000);
-  bannerTimer = window.setTimeout(() => { bannerVisible.value = false; }, 10000);
-}
-
-function toggleGroup(id: string): void {
-  const next = new Set(expandedGroups.value);
-  if (next.has(id)) next.delete(id);
-  else next.add(id);
-  expandedGroups.value = next;
-}
-
-function toggleDrawdown(): void {
-  showDrawdown.value = !showDrawdown.value;
-  localStorage.setItem('qwatch.overview.drawdown', showDrawdown.value ? '1' : '0');
+async function ensureGroupSelection(): Promise<void> {
+  const runners = data.value?.runners || [];
+  if (!runners.length) return;
+  const id = runners.some((runner) => runner.id === selectedGroupId.value)
+    ? selectedGroupId.value
+    : runners[0].id;
+  await loadGroupNav(id);
 }
 
 async function load(initial = false, silent = false): Promise<void> {
@@ -153,342 +89,173 @@ async function load(initial = false, silent = false): Promise<void> {
   else if (!silent) refreshing.value = true;
   error.value = '';
   try {
-    const next = await api.overview(range.value);
-    data.value = next;
-    detectNewSignal(next);
+    data.value = await api.overview();
+    lastLoadedAt.value = Date.now();
+    await ensureGroupSelection();
   } catch (err) {
     error.value = err instanceof Error ? err.message : '总览加载失败';
   } finally {
     loading.value = false;
-    if (!silent) refreshing.value = false;
+    refreshing.value = false;
   }
 }
 
-function retry(): void {
-  load(true);
+function openEvent(event: { runner_id?: string }): void {
+  if (!event.runner_id) return;
+  void router.push('/strategies/' + event.runner_id + '?tab=events');
 }
 
-watch(range, () => (isPortfolio.value ? load() : loadRunner()));
-watch(scope, (value) => {
-  if (value !== 'portfolio') loadRunner();
-});
-watch(() => settings.refreshSeq, () => load());
+function scheduleReload(): void {
+  window.clearTimeout(reloadTimer);
+  reloadTimer = window.setTimeout(() => { void load(false, true); }, 700);
+}
+
+watch(() => settings.refreshSeq, () => { void load(false, true); });
+watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt], scheduleReload);
 
 onMounted(() => {
-  load(true);
+  void load(true);
   pollTimer = window.setInterval(() => {
-    if (!document.hidden) load(false, true);
-  }, 5000);
+    if (!document.hidden) void load(false, true);
+  }, 20000);
 });
 
 onBeforeUnmount(() => {
   window.clearInterval(pollTimer);
-  clearSignalTimers();
+  window.clearTimeout(reloadTimer);
 });
 </script>
 
 <template>
   <div class="page">
-    <PageHeader title="总览" :subtitle="'组合实时状态 · 数据时间 ' + (data ? fmtDateTime(data.as_of) : '—') + ' CST'">
+    <PageHeader title="总览" :subtitle="'策略存活与实时告警 · 更新于 ' + fmtDateTime(new Date(lastLoadedAt).toISOString()) + ' CST'">
       <template #extra>
-        <span class="chip mono">Asia/Shanghai</span>
+        <n-button size="small" :loading="refreshing" @click="load(false)">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </n-button>
       </template>
     </PageHeader>
 
-    <div
-      v-if="bannerVisible && latestSignal"
-      class="signal-banner"
-      role="button"
-      tabindex="0"
-      @click="$router.push('/signals')"
-      @keydown.enter="$router.push('/signals')"
-    >
-      <span class="banner-pulse" />
-      <strong>最新信号</strong>
-      <span class="banner-sep">·</span>
-      <span>{{ latestSignal.runner_name }}</span>
-      <span class="banner-sep">·</span>
-      <span class="mono">{{ latestSignal.instrument }}</span>
-      <span>{{ SIGNAL_ACTION_LABELS[latestSignal.action] }}</span>
-    </div>
-
     <div v-if="loading && !data" class="page">
-      <div class="grid grid-kpi">
-        <div v-for="i in 4" :key="i" class="skel skel-card" style="min-height: 128px" />
+      <div class="summary-grid">
+        <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 96px" />
       </div>
-
-      <div class="grid grid-main">
-        <div class="skel" style="height: 380px; border-radius: 12px" />
-        <div class="skel" style="height: 380px; border-radius: 12px" />
-      </div>
-      <div class="grid grid-3">
-        <div v-for="i in 3" :key="i" class="skel skel-card" />
+      <div class="grid grid-2">
+        <div v-for="i in 2" :key="i" class="skel" style="height: 220px; border-radius: 12px" />
       </div>
     </div>
 
     <div v-else-if="error && !data" class="card">
-      <EmptyState title="总览数据加载失败" :description="error">
-        <template #action><n-button size="small" @click="retry">重新加载</n-button></template>
+      <EmptyState title="总览加载失败" :description="error">
+        <template #action><n-button size="small" @click="load(true)">重新加载</n-button></template>
       </EmptyState>
     </div>
 
-    <template v-else-if="data">
+    <template v-else-if="data && summary">
       <div v-if="error" class="error-bar">
         <span class="dot" />{{ error }}
-        <n-button text size="tiny" @click="retry">重试</n-button>
+        <n-button text size="tiny" @click="load(true)">重试</n-button>
       </div>
 
-      <section class="card overview-board">
-        <div class="board-head board-head--compact">
-          <button type="button" class="board-toggle" @click="metricsOpen = !metricsOpen">
-            <span>{{ metricsOpen ? '收起指标' : '展开指标' }}</span>
-            <ChevronUp v-if="metricsOpen" :size="14" />
-            <ChevronDown v-else :size="14" />
-          </button>
+      <div class="summary-grid">
+        <div class="ov-kpi">
+          <div class="ov-kpi-top">
+            <span class="ov-kpi-label">策略组</span>
+            <span class="ov-kpi-icon"><Server :size="15" /></span>
+          </div>
+          <div class="ov-kpi-value">{{ summary.total }} <span class="ov-kpi-unit">组</span></div>
+          <div class="ov-kpi-foot">运行中 {{ summary.running }} 组</div>
         </div>
-
-        <div class="board-kpis">
-          <div class="board-kpi">
-            <div class="board-kpi-top">
-              <span class="kpi-label">总权益</span>
-              <span class="kpi-icon"><Wallet :size="15" /></span>
-            </div>
-            <div class="kpi-value">¥{{ fmtMoney(data.total_equity) }}</div>
-            <div class="board-kpi-foot">
-              <PnlText :value="data.today_pnl" :pct="data.today_pnl_pct" show-pct size="sm" />
-              <span class="board-kpi-sub">较昨日收盘</span>
-            </div>
+        <div class="ov-kpi">
+          <div class="ov-kpi-top">
+            <span class="ov-kpi-label">进程在线</span>
+            <span class="ov-kpi-icon"><Waves :size="15" /></span>
           </div>
-
-          <div class="board-kpi">
-            <div class="board-kpi-top">
-              <span class="kpi-label">今日盈亏</span>
-              <span class="kpi-icon"><Activity :size="15" /></span>
-            </div>
-            <div class="kpi-value">¥{{ fmtMoney(data.today_pnl) }}</div>
-            <div class="board-kpi-foot">
-              <PnlText :value="data.today_pnl" :pct="data.today_pnl_pct" show-pct size="sm" />
-              <span class="board-kpi-sub">今日收益率</span>
-            </div>
-          </div>
-
-          <router-link to="/strategies" class="board-kpi board-kpi--link">
-            <div class="board-kpi-top">
-              <span class="kpi-label">策略运行</span>
-              <span class="kpi-icon"><Activity :size="15" /></span>
-            </div>
-            <div class="kpi-value">{{ data.running }} <span class="kpi-dim">/ {{ data.total }}</span></div>
-            <div class="board-kpi-foot"><span class="board-kpi-sub">运行中 / 全部策略</span></div>
-          </router-link>
-
-          <router-link
-            to="/alerts"
-            class="board-kpi board-kpi--link"
-            :class="{ 'board-kpi--danger': activeAlertCount > 0 }"
-          >
-            <div class="board-kpi-top">
-              <span class="kpi-label">活跃告警</span>
-              <span class="kpi-icon" :class="{ danger: activeAlertCount > 0 }"><Bell :size="15" /></span>
-            </div>
-            <div class="kpi-value" :class="{ danger: activeAlertCount > 0 }">{{ data.active_alerts }} <span class="kpi-unit">条</span></div>
-            <div class="board-kpi-foot">
-              <span class="board-kpi-sub">{{ activeAlertCount > 0 ? '心跳丢失 / 策略卡死 · 点击处理' : '全部正常' }}</span>
-            </div>
-          </router-link>
+          <div class="ov-kpi-value">{{ summary.processesOnline }}<span class="ov-kpi-dim"> / {{ summary.processesTotal }}</span></div>
+          <div class="ov-kpi-foot">在线 / 全部进程</div>
         </div>
-
-        <div v-show="metricsOpen" class="board-risks">
-          <div v-for="item in metricItems" :key="item.label" class="risk-cell">
-            <span class="risk-label">{{ item.label }}</span>
-            <span class="risk-value mono" :class="item.tone">{{ item.value }}</span>
+        <div class="ov-kpi" :class="{ 'ov-kpi--warn': summary.abnormal > 0 }">
+          <div class="ov-kpi-top">
+            <span class="ov-kpi-label">异常策略</span>
+            <span class="ov-kpi-icon" :class="{ warn: summary.abnormal > 0 }"><ShieldAlert :size="15" /></span>
           </div>
-          <template v-if="!metricItems.length">
-            <div v-for="i in 6" :key="i" class="risk-cell">
-              <span class="skel skel-line" style="width: 42px; height: 10px" />
-              <span class="skel skel-line" style="width: 64px; height: 18px; margin-top: 6px" />
-            </div>
-          </template>
+          <div class="ov-kpi-value" :class="{ warn: summary.abnormal > 0 }">{{ summary.abnormal }} <span class="ov-kpi-unit">组</span></div>
+          <div class="ov-kpi-foot">{{ summary.abnormal > 0 ? '存在离线/降级/暂停策略组' : '全部策略组正常' }}</div>
         </div>
-      </section>
-
-      <div class="grid grid-main">
-        <SectionCard :title="(isPortfolio ? '组合' : activeRunner?.name || '策略') + (chartView === 'pnl' ? '盈亏' : '净值')">
-          <template #extra>
-            <div class="scope-switch">
-              <button type="button" class="scope-item" :class="{ active: isPortfolio }" @click="scope = 'portfolio'">组合</button>
-              <button
-                v-for="runner in data.runners"
-                :key="runner.id"
-                type="button"
-                class="scope-item"
-                :class="{ active: scope === runner.id }"
-                @click="scope = runner.id"
-              >
-                <StatusDot :status="runner.status" :size="6" />
-                {{ runner.name }}
-              </button>
-            </div>
-            <div class="chart-view-switch">
-              <button type="button" :class="{ active: chartView === 'pnl' }" @click="chartView = 'pnl'">盈亏</button>
-              <button type="button" :class="{ active: chartView === 'nav' }" @click="chartView = 'nav'">净值</button>
-            </div>
-            <RangeTabs v-model="range" />
-          </template>
-
-          <div class="chart-wrap" :class="{ refreshing: refreshing || scopeLoading }">
-            <EquityChart
-              :data="chartPoints"
-              :height="300"
-              :value-mode="chartView === 'nav' ? 'nav' : 'money'"
-              :value-label="chartView === 'pnl' ? '累计盈亏' : '净值'"
-            />
-            <div class="chart-foot">
-              <span class="legend-item"><i class="legend-line eq" />{{ isPortfolio ? '组合' : activeRunner?.name }}</span>
-              <span v-if="chartView === 'pnl' && periodPnl !== null">
-                区间盈亏 <PnlText :value="periodPnl" :pct="null" :money="true" :digits="2" size="sm" />
-              </span>
-              <span v-else-if="chartView === 'nav' && periodReturn !== null">
-                区间收益 <PnlText :value="periodReturn" :pct="null" :money="false" :digits="2" size="sm" />
-              </span>
-              <span v-if="chartView === 'pnl' && latestChartValue !== null" class="muted">
-                最新盈亏 <span class="num" :class="pnlClass(latestChartValue)">¥{{ fmtMoney(latestChartValue) }}</span>
-              </span>
-              <span v-else-if="chartView === 'nav' && latestChartValue !== null" class="muted">
-                最新净值 <span class="num mono">{{ latestChartValue.toFixed(4) }}</span>
-              </span>
-              <span class="spacer" />
-              <span class="muted mono">{{ range.toUpperCase() }} · {{ chartPoints.length }} 点</span>
-              <button type="button" class="dd-toggle" @click="toggleDrawdown">
-                {{ showDrawdown ? '隐藏回撤' : '显示回撤' }}
-                <ChevronUp v-if="showDrawdown" :size="12" />
-                <ChevronDown v-else :size="12" />
-              </button>
-            </div>
-            <template v-if="showDrawdown">
-              <div class="dd-head">
-                <span class="eyebrow">回撤</span>
-                <span class="muted">{{ isPortfolio ? '组合峰值回落' : '策略峰值回落' }}</span>
-                <span class="spacer" />
-                <span class="muted mono">{{ drawdownPoints.length }} 点</span>
-              </div>
-              <DrawdownChart :data="drawdownPoints" :height="132" />
-            </template>
+        <router-link to="/alerts" class="ov-kpi ov-kpi--link" :class="{ 'ov-kpi--danger': summary.activeAlerts > 0 }">
+          <div class="ov-kpi-top">
+            <span class="ov-kpi-label">活跃告警</span>
+            <span class="ov-kpi-icon" :class="{ danger: summary.activeAlerts > 0 }"><Bell :size="15" /></span>
           </div>
-        </SectionCard>
-
-        <SectionCard title="策略状态" subtitle="按状态与今日盈亏排序">
-          <template #extra>
-            <router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link>
-          </template>
-          <div class="status-list">
-            <div v-for="runner in data.runners" :key="runner.id" class="status-group">
-              <div class="status-row" role="link" tabindex="0" @click="$router.push('/strategies/' + runner.id)" @keydown.enter="$router.push('/strategies/' + runner.id)">
-                <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
-                <div class="status-main">
-                  <span class="status-name truncate">{{ runner.name }}</span>
-                  <span class="status-meta">
-                    {{ runner.instrument_count > 1 ? runner.online_instruments + '/' + runner.instrument_count + ' 品种在线 · ' : '' }}{{ runner.description || MARKET_LABELS[runner.market] || runner.market }}
-                  </span>
-                  <HeartbeatMini :bars="runner.heartbeat_bars" />
-                  <span v-if="runner.last_msg" class="status-msg truncate" :title="runner.last_msg">{{ runner.last_msg }}</span>
-                </div>
-                <div class="status-right">
-                  <PnlText :value="runner.today_pnl" :pct="runner.today_pnl_pct" show-pct size="sm" />
-                  <span class="status-hb mono">{{ fromNow(runner.last_heartbeat) }}</span>
-                </div>
-                <button
-                  v-if="runner.instrument_count > 1"
-                  type="button"
-                  class="group-expand"
-                  :aria-label="expandedGroups.has(runner.id) ? '收起品种' : '展开品种'"
-                  @click.stop="toggleGroup(runner.id)"
-                >
-                  <ChevronUp v-if="expandedGroups.has(runner.id)" :size="14" />
-                  <ChevronDown v-else :size="14" />
-                </button>
-              </div>
-              <div v-if="expandedGroups.has(runner.id)" class="instrument-sub">
-                <div v-for="item in runner.instruments" :key="item.name" class="instrument-row">
-                  <StatusDot :status="item.status" :size="6" />
-                  <span class="mono instrument-name">{{ item.name }}</span>
-                  <StatusTag :status="item.status" compact />
-                  <span class="instrument-pnl" :class="pnlClass(item.pnl)">{{ item.pnl === null ? '—' : '¥' + fmtMoney(item.pnl) }}</span>
-                  <span class="instrument-hb">{{ fromNow(item.last_seen) }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </SectionCard>
+          <div class="ov-kpi-value" :class="{ danger: summary.activeAlerts > 0 }">{{ summary.activeAlerts }} <span class="ov-kpi-unit">条</span></div>
+          <div class="ov-kpi-foot">{{ summary.activeAlerts > 0 ? 'P0 告警待处理 · 点击查看' : '全部正常' }}</div>
+        </router-link>
       </div>
 
-
-      <div class="grid grid-main">
-        <SectionCard title="最新信号" subtitle="最近 8 条">
-          <template #extra>
-            <router-link to="/signals" class="link-more">全部信号 <ChevronRight :size="13" /></router-link>
-          </template>
-          <div v-if="data.recent_signals.length" class="tbl-wrap">
-            <table class="tbl tbl--compact">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>策略</th>
-                  <th>品种</th>
-                  <th>方向</th>
-                  <th>动作</th>
-                  <th class="th-num">数量</th>
-                  <th class="th-num">参考价</th>
-                  <th class="th-num">金额</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="signal in data.recent_signals"
-                  :key="signal.id"
-                  :class="{ 'signal-flash': flashSignalIds.includes(signal.id) }"
-                >
-                  <td class="mono nowrap">{{ fmtDateTime(signal.ts) }}</td>
-                  <td class="truncate">{{ signal.runner_name }}</td>
-                  <td>
-                    <span class="mono">{{ signal.instrument }}</span>
-                    <span class="inst-name">{{ signal.instrument_name }}</span>
-                  </td>
-                  <td><SideTag :side="signal.side" /></td>
-                  <td class="muted">{{ SIGNAL_ACTION_LABELS[signal.action] }}</td>
-                  <td class="td-num">{{ signal.qty }}</td>
-                  <td class="td-num">{{ signal.price }}</td>
-                  <td class="td-num">{{ fmtMoney(signal.amount) }}</td>
-                </tr>
-              </tbody>
-            </table>
+      <SectionCard title="策略组净值" subtitle="选择策略组查看净值曲线；净值由组内进程上报，同一 token 最后一次为准">
+        <template #extra>
+          <div class="nav-group-tabs">
+            <button
+              v-for="runner in data.runners"
+              :key="runner.id"
+              type="button"
+              :class="{ active: selectedGroupId === runner.id }"
+              @click="loadGroupNav(runner.id)"
+            >
+              <StatusDot :status="runner.status" :size="6" />
+              {{ runner.name }}
+            </button>
           </div>
-          <EmptyState v-else compact title="暂无信号" description="策略上报交易信号后会出现在这里" />
+        </template>
+        <div class="nav-panel" :class="{ dimmed: groupLoading }">
+          <div class="nav-panel-head">
+            <div>
+              <span class="nav-panel-label">策略组净值</span>
+              <strong class="nav-panel-value mono">{{ navValue }}</strong>
+            </div>
+            <span class="nav-panel-meta">{{ navUpdated ? '更新于 ' + fmtDateTime(navUpdated) : '暂无净值上报' }}</span>
+          </div>
+          <NavChart :data="navCurve" :height="220" />
+        </div>
+      </SectionCard>
+
+      <SectionCard title="策略组" :subtitle="'共 ' + data.runners.length + ' 个策略组 · 展开查看进程状态与最后消息'">
+        <template #extra>
+          <router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link>
+        </template>
+        <div v-if="data.runners.length" class="grid grid-2">
+          <GroupCard v-for="runner in data.runners" :key="runner.id" :runner="runner" />
+        </div>
+        <EmptyState v-else compact title="还没有策略组" description="前往「策略」页创建策略并生成接入令牌，即可开始接收进程心跳。" />
+      </SectionCard>
+
+      <div class="grid grid-2">
+        <SectionCard title="最近动态" subtitle="消息 / 信号合并 · SSE 实时追加">
+          <template #extra>
+            <span class="live-hint" :class="{ live: realtime.live }">
+              <StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />
+              {{ realtime.live ? '实时' : '轮询兜底' }}
+            </span>
+          </template>
+          <EventTimeline :events="recentEvents" show-runner clickable empty-title="暂无动态" empty-desc="策略上报消息或信号后会出现在这里。" @select="openEvent" />
         </SectionCard>
 
-        <SectionCard title="告警动态" subtitle="活跃告警优先">
+        <SectionCard title="最近告警" subtitle="P0 · 心跳丢失 / 策略卡死">
           <template #extra>
             <router-link to="/alerts" class="link-more">告警中心 <ChevronRight :size="13" /></router-link>
           </template>
-          <div v-if="data.alerts.length" class="alert-feed">
-            <button
-              v-for="alert in data.alerts"
-              :key="alert.id"
-              type="button"
-              class="alert-item"
-              @click="$router.push('/alerts')"
-            >
-              <SeverityTag :severity="alert.severity" size="sm" />
+          <div v-if="recentAlerts.length" class="alert-feed">
+            <router-link v-for="alert in recentAlerts" :key="alert.id" to="/alerts" class="alert-item">
+              <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
               <div class="alert-body">
                 <p class="alert-summary">{{ alert.summary }}</p>
-                <p class="alert-meta">
-                  <span class="mono">{{ alert.runner_name }}</span>
-                  <span class="dot-sep">·</span>
-                  <span class="mono">{{ fromNow(alert.starts_at) }}</span>
-                </p>
+                <p class="alert-meta mono">{{ alert.runner_name }} · {{ fromNow(alert.starts_at) }}</p>
               </div>
-            </button>
+              <span class="alert-status" :class="alert.status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
+            </router-link>
           </div>
-          <EmptyState v-else compact title="没有活跃告警" description="所有策略心跳正常" />
+          <EmptyState v-else compact title="暂无告警" description="所有策略组心跳与运行状态正常。" />
         </SectionCard>
       </div>
     </template>
@@ -496,63 +263,156 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.chart-view-switch {
-  display: inline-flex;
-  padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--surface-2);
-}
-.chart-view-switch button {
-  height: 22px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 11px;
-  cursor: pointer;
-}
-.chart-view-switch button.active {
-  background: var(--primary-soft);
-  color: var(--text);
-}
-.scope-switch {
+.nav-group-tabs {
   display: flex;
   align-items: center;
-  gap: 5px;
-  margin: 0;
+  gap: 4px;
   max-width: 100%;
   overflow-x: auto;
   scrollbar-width: none;
 }
-.scope-switch::-webkit-scrollbar {
-  display: none;
-}
-.scope-item {
+.nav-group-tabs button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  flex: 0 0 auto;
-  height: 26px;
-  padding: 0 10px;
+  height: 25px;
+  padding: 0 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: var(--surface);
+  background: transparent;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
-  transition: all 150ms ease;
 }
-.scope-item:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-.scope-item.active {
+.nav-group-tabs button.active {
   border-color: var(--primary);
   background: var(--primary-soft);
   color: var(--text);
+}
+.nav-panel {
+  padding: 12px 14px 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(91, 140, 255, 0.07), rgba(21, 28, 44, 0.25));
+  transition: opacity 160ms ease;
+}
+.nav-panel.dimmed {
+  opacity: 0.6;
+}
+.nav-panel-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.nav-panel-label {
+  display: block;
+  font-size: 10px;
+  color: var(--text-3);
+}
+.nav-panel-value {
+  display: block;
+  margin-top: 1px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
+}
+.nav-panel-meta {
+  font-size: 10px;
+  color: var(--text-3);
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--gap);
+}
+.ov-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: inherit;
+}
+.ov-kpi--link {
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+.ov-kpi--link:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+.ov-kpi--danger {
+  border-color: rgba(240, 68, 56, 0.32);
+  background: rgba(240, 68, 56, 0.055);
+}
+.ov-kpi--warn {
+  border-color: rgba(245, 165, 36, 0.28);
+}
+.ov-kpi-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ov-kpi-label {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.ov-kpi-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 8px;
+  color: #a9c2ff;
+  border: 1px solid rgba(91, 140, 255, 0.22);
+  background: rgba(91, 140, 255, 0.1);
+}
+.ov-kpi-icon.warn {
+  color: #f5b64b;
+  border-color: rgba(245, 165, 36, 0.32);
+  background: rgba(245, 165, 36, 0.1);
+}
+.ov-kpi-icon.danger {
+  color: #ff8f86;
+  border-color: rgba(240, 68, 56, 0.32);
+  background: rgba(240, 68, 56, 0.12);
+}
+.ov-kpi-value {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+.ov-kpi-value.warn {
+  color: #f5b64b;
+}
+.ov-kpi-value.danger {
+  color: #ff8f86;
+}
+.ov-kpi-unit {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-2);
+}
+.ov-kpi-dim {
+  color: var(--text-2);
+  font-size: 18px;
+}
+.ov-kpi-foot {
+  font-size: 11px;
+  color: var(--text-3);
 }
 .link-more {
   display: inline-flex;
@@ -565,371 +425,15 @@ onBeforeUnmount(() => {
 .link-more:hover {
   color: var(--primary);
 }
-.chart-wrap {
-  transition: opacity 160ms ease;
-}
-.chart-wrap.refreshing {
-  opacity: 0.55;
-}
-.chart-foot {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-  color: var(--text-2);
-}
-.chart-foot .spacer {
-  flex: 1;
-}
-.legend-item {
+.live-hint {
   display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-3);
-}
-.legend-line {
-  display: inline-block;
-  width: 14px;
-  height: 2px;
-  border-radius: 1px;
-}
-.legend-line.eq {
-  background: var(--primary);
-}
-.dd-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 11px;
-}
-.dd-head .spacer {
-  flex: 1;
-}
-.dd-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-3);
-  font-size: 11px;
-  cursor: pointer;
-}
-.dd-toggle:hover {
-  color: var(--primary);
-}
-.signal-flash {
-  animation: signal-flash 1.3s ease-in-out infinite;
-}
-@keyframes signal-flash {
-  0%, 100% { background: rgba(91, 140, 255, 0.04); }
-  50% { background: rgba(91, 140, 255, 0.16); }
-}
-.signal-banner {
-  position: fixed;
-  z-index: 90;
-  top: 64px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100vw - 32px);
-  padding: 9px 14px;
-  border: 1px solid rgba(91, 140, 255, 0.4);
-  border-radius: 9px;
-  background: rgba(21, 28, 44, 0.96);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  animation: banner-in 180ms ease-out;
-}
-.signal-banner strong {
-  color: var(--primary);
-  font-weight: 600;
-}
-.banner-sep {
-  color: var(--text-3);
-}
-.banner-pulse {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--primary);
-  animation: banner-pulse 1.2s ease-in-out infinite;
-}
-@keyframes banner-in {
-  from { opacity: 0; transform: translate(-50%, -6px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-@keyframes banner-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.1); }
-  50% { box-shadow: 0 0 0 7px rgba(91, 140, 255, 0.02); }
-}
-.overview-board {
-  padding: 14px 20px 14px;
-}
-.board-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 10px;
-}
-.board-head--compact {
-  justify-content: flex-end;
-  margin-bottom: 6px;
-}
-.board-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 26px;
-  padding: 0 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 11px;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-.board-toggle:hover {
-  border-color: var(--border-strong);
-  color: var(--text);
-}
-.board-kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-.board-kpi {
-  position: relative;
-  min-width: 0;
-  padding: 0 20px;
-  border-left: 1px solid var(--border);
-  color: inherit;
-}
-.board-kpi:first-child {
-  padding-left: 0;
-  border-left: none;
-}
-.board-kpi--link {
-  border-radius: 8px;
-  transition: background-color 150ms ease;
-}
-.board-kpi--link:hover {
-  background: rgba(21, 28, 44, 0.55);
-}
-.board-kpi--danger {
-  background: rgba(240, 68, 56, 0.055);
-}
-.board-kpi-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.kpi-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  border-radius: 8px;
-  color: #a9c2ff;
-  border: 1px solid rgba(91, 140, 255, 0.22);
-  background: rgba(91, 140, 255, 0.1);
-}
-.kpi-icon.danger {
-  color: #ff8f86;
-  border-color: rgba(240, 68, 56, 0.32);
-  background: rgba(240, 68, 56, 0.12);
-}
-.board-kpi .kpi-value {
-  margin-top: 6px;
-}
-.kpi-value.danger {
-  color: #ff8f86;
-}
-.kpi-dim {
-  color: var(--text-2);
-  font-size: 22px;
-}
-.kpi-unit {
-  color: var(--text-2);
-  font-family: var(--font-sans);
-  font-size: 18px;
-}
-.board-kpi-foot {
-  display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 18px;
-  margin-top: 4px;
-  flex-wrap: wrap;
-}
-.board-kpi-sub {
   font-size: 11px;
-  color: var(--text-2);
-}
-.board-risks {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-}
-.risk-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  padding: 2px 16px;
-  border-left: 1px solid var(--border);
-}
-.risk-cell:first-child {
-  padding-left: 0;
-  border-left: none;
-}
-.risk-label {
-  font-size: 11px;
-  color: var(--text-2);
-}
-.risk-value {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-}
-.risk-value.is-up {
-  color: var(--up);
-}
-.risk-value.is-down {
-  color: var(--down);
-}
-.status-list {
-  display: flex;
-  flex-direction: column;
-  margin: -4px 0;
-}
-.status-group {
-  border-bottom: 1px solid rgba(30, 38, 55, 0.65);
-}
-.status-group:last-child {
-  border-bottom: none;
-}
-.group-expand {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.group-expand:hover {
-  background: rgba(91, 140, 255, 0.1);
-  color: var(--text);
-}
-.instrument-sub {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0 4px 6px 24px;
-  padding: 6px 8px;
-  border-left: 1px solid var(--border);
-}
-.instrument-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 3px 0;
-  font-size: 11px;
-}
-.instrument-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-}
-.instrument-pnl {
-  color: var(--text);
-  font-family: var(--font-mono);
-}
-.instrument-hb {
-  width: 52px;
-  text-align: right;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 6px;
-  border-bottom: 1px solid rgba(30, 38, 55, 0.65);
-  color: var(--text);
-  border-radius: 6px;
-  transition: background-color 150ms ease;
-}
-.status-row:last-child {
-  border-bottom: none;
-}
-.status-row:hover {
-  background: rgba(21, 28, 44, 0.7);
-  color: var(--text);
-}
-.status-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.status-name {
-  font-size: 13px;
-}
-.status-meta {
-  font-size: 10px;
   color: var(--text-3);
 }
-.status-msg {
-  max-width: 100%;
-  margin-top: 2px;
-  font-size: 10px;
-  color: #f5a524;
-}
-.status-right {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 1px;
-}
-.status-hb {
-  font-size: 10px;
-  color: var(--text-3);
-}
-.inst-name {
-  display: block;
-  font-size: 10px;
-  color: var(--text-3);
-  line-height: 1.2;
+.live-hint.live {
+  color: #2ecc8f;
 }
 .alert-feed {
   display: flex;
@@ -940,15 +444,11 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  width: 100%;
   padding: 10px 8px;
-  border: 0;
   border-radius: 8px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 150ms ease;
+  color: inherit;
   border-bottom: 1px solid rgba(30, 38, 55, 0.6);
+  transition: background-color 150ms ease;
 }
 .alert-item:last-of-type {
   border-bottom: none;
@@ -956,8 +456,22 @@ onBeforeUnmount(() => {
 .alert-item:hover {
   background: rgba(21, 28, 44, 0.7);
 }
+.rule-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(240, 68, 56, 0.32);
+  background: rgba(240, 68, 56, 0.1);
+  color: #ff8f86;
+  font-size: 10px;
+  white-space: nowrap;
+}
 .alert-body {
   min-width: 0;
+  flex: 1;
 }
 .alert-summary {
   font-size: 12px;
@@ -969,63 +483,38 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .alert-meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   margin-top: 3px;
   font-size: 10px;
   color: var(--text-3);
 }
-.dot-sep {
-  opacity: 0.6;
+.alert-status {
+  flex: none;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.alert-status.firing {
+  color: #ff8f86;
+}
+.alert-status.acknowledged {
+  color: #f5b64b;
+}
+.alert-status.resolved {
+  color: var(--text-3);
 }
 @media (max-width: 1279px) {
-  .board-kpis {
+  .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .board-kpi {
-    padding: 14px 0;
-    border-left: none;
-    border-top: 1px solid var(--border);
-  }
-  .board-kpi:nth-child(-n + 2) {
-    padding-top: 0;
-    border-top: none;
-  }
-  .board-kpi:nth-child(even) {
-    padding-left: 16px;
-    border-left: 1px solid var(--border);
-  }
-  .board-risks {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    row-gap: 12px;
-  }
-  .risk-cell:nth-child(3n + 1) {
-    padding-left: 0;
-    border-left: none;
   }
 }
 @media (max-width: 639px) {
-  .overview-board {
-    padding: 16px;
-  }
-  .board-kpi {
-    padding-left: 0;
-    padding-right: 0;
-  }
-  .board-kpi:nth-child(even) {
-    padding-left: 12px;
-  }
-  .board-risks {
+  .summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-  .risk-cell:nth-child(3n + 1) {
-    padding-left: 16px;
-    border-left: 1px solid var(--border);
+  .ov-kpi {
+    padding: 12px;
   }
-  .risk-cell:nth-child(odd) {
-    padding-left: 0;
-    border-left: none;
+  .ov-kpi-value {
+    font-size: 22px;
   }
 }
 </style>
