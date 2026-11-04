@@ -4,7 +4,7 @@ import { ref } from 'vue';
 import { ChevronDown, ChevronUp } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { ProcessInfo, Runner } from '@/api/types';
-import { fromNow } from '@/utils/format';
+import { fmtNumber, fromNow } from '@/utils/format';
 import HeartbeatGrid from './HeartbeatGrid.vue';
 import NavSparkline from './NavSparkline.vue';
 import ProcessTable from './ProcessTable.vue';
@@ -73,12 +73,11 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) void lo
 
     <div class="nav-row">
       <div class="nav-main">
-        <span class="nav-label">策略净值</span>
-        <strong class="nav-value mono">{{ runner.nav ?? '—' }}</strong>
-        <span v-if="runner.equity" class="nav-equity">权益 ¥{{ runner.equity }}</span>
+        <span class="nav-label">策略权益</span>
+        <strong class="nav-value mono">{{ runner.equity !== null && runner.equity !== undefined ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</strong>
       </div>
-      <NavSparkline v-if="runner.nav_sparkline && runner.nav_sparkline.length" :values="runner.nav_sparkline" />
-      <span v-if="runner.nav_updated_at" class="nav-time">更新 {{ fromNow(runner.nav_updated_at) }}</span>
+      <NavSparkline v-if="runner.equity_sparkline && runner.equity_sparkline.length" :values="runner.equity_sparkline" />
+      <span v-if="runner.equity_updated_at" class="nav-time">更新 {{ fromNow(runner.equity_updated_at) }}</span>
     </div>
 
     <p class="desc" :title="runner.description || ''">{{ runner.description || '暂无简介' }}</p>

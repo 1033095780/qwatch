@@ -166,13 +166,6 @@ class Qwatch:
                 self._last_tick = str(last_tick)
             return self._loop
 
-    def nav(self, value: float) -> None:
-        """上报策略组净值（同一 token 下任意进程可报；服务端以最后一次为准）。"""
-        number = self._number(value, "nav")
-        if number <= 0:
-            raise ValueError("nav 必须大于 0")
-        self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "nav": number})
-
     def equity(self, value: float) -> None:
         """上报策略组权益（同一 token 下任意进程可报；服务端以最后一次为准）。"""
         number = self._number(value, "equity")

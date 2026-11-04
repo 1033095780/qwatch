@@ -1,4 +1,4 @@
-"""最小示例：主循环 tick、策略组净值、动态消息与交易信号（v0.3）。"""
+"""最小示例：主循环 tick、策略组权益、动态消息与交易信号（v0.3）。"""
 
 import os
 import time
@@ -17,7 +17,7 @@ with Qwatch(URL, TOKEN, heartbeat=30, instrument=INSTRUMENT) as q:
     for i in range(1, 1000):
         q.tick()
         if i % 30 == 0:
-            q.nav(1.0 + i * 0.00001)
+            q.equity(1_000_000 + i * 100)
         if i % 20 == 0:
             q.signal(CONTRACT, "long", "open", 1, price=3521, msg="示例信号")
         if i % 60 == 0:

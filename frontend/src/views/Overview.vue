@@ -1,22 +1,23 @@
-// Overview.vue — v0.2 总览：存活汇总 + 策略组（可展开进程）+ 实时动态/告警；无任何收益/净值/风险数字。
+// Overview.vue — v0.3 总览：总权益/权益曲线 + 策略状态/心跳 + 实时动态/告警。
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { NButton } from 'naive-ui';
 import { Bell, ChevronRight, RefreshCw, TrendingUp, Wallet, Waves } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Overview, RunnerDetail } from '@/api/types';
+import type { Overview } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtDateTime, fmtNumber, fromNow } from '@/utils/format';
 import { ruleLabel } from '@/utils/catalog';
 import EmptyState from '@/components/EmptyState.vue';
 import EventTimeline from '@/components/EventTimeline.vue';
-import GroupCard from '@/components/GroupCard.vue';
+import HeartbeatGrid from '@/components/HeartbeatGrid.vue';
 import NavChart from '@/components/NavChart.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import StatusDot from '@/components/StatusDot.vue';
+import StatusTag from '@/components/StatusTag.vue';
 
 const settings = useSettingsStore();
 const realtime = useRealtimeStore();
@@ -27,9 +28,6 @@ const loading = ref(true);
 const refreshing = ref(false);
 const error = ref('');
 const lastLoadedAt = ref(Date.now());
-const selectedGroupId = ref('');
-const selectedDetail = ref<RunnerDetail | null>(null);
-const groupLoading = ref(false);
 let pollTimer: number | undefined;
 let reloadTimer: number | undefined;
 
@@ -60,48 +58,13 @@ const recentEvents = computed(() => {
   return [...live, ...initial.filter((event) => !ids.has(String(event.id)))].slice(0, 8);
 });
 const recentAlerts = computed(() => (data.value?.recent_alerts || []).slice(0, 6));
-const selectedGroup = computed(() => data.value?.runners.find((runner) => runner.id === selectedGroupId.value) ?? null);
-const navValue = computed(() => selectedGroup.value?.nav ?? selectedDetail.value?.runner.nav ?? '—');
-const navUpdated = computed(() => selectedGroup.value?.nav_updated_at ?? selectedDetail.value?.runner.nav_updated_at ?? null);
-const navCurve = computed(() => selectedDetail.value?.nav_curve ?? []);
-const metric = ref<'nav' | 'equity'>('nav');
-const chartData = computed(() => (metric.value === 'nav' ? navCurve.value : selectedDetail.value?.equity_curve ?? []));
-const chartValue = computed(() => {
-  if (metric.value === 'nav') return selectedGroup.value?.nav ?? selectedDetail.value?.runner.nav ?? '—';
-  return selectedGroup.value?.equity ?? selectedDetail.value?.runner.equity ?? '—';
-});
-const chartUpdated = computed(() => {
-  if (metric.value === 'nav') return selectedGroup.value?.nav_updated_at ?? selectedDetail.value?.runner.nav_updated_at ?? null;
-  return selectedGroup.value?.equity_updated_at ?? selectedDetail.value?.runner.equity_updated_at ?? null;
-});
+const equityCurve = computed(() => data.value?.equity_curve ?? []);
 const equityChange = computed(() => {
   const raw = data.value?.today_equity_change;
   if (raw === null || raw === undefined || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 });
-
-async function loadGroupNav(id: string): Promise<void> {
-  if (!id) return;
-  groupLoading.value = true;
-  try {
-    selectedDetail.value = await api.runner(id);
-    selectedGroupId.value = id;
-  } catch {
-    selectedDetail.value = null;
-  } finally {
-    groupLoading.value = false;
-  }
-}
-
-async function ensureGroupSelection(): Promise<void> {
-  const runners = data.value?.runners || [];
-  if (!runners.length) return;
-  const id = runners.some((runner) => runner.id === selectedGroupId.value)
-    ? selectedGroupId.value
-    : runners[0].id;
-  await loadGroupNav(id);
-}
 
 async function load(initial = false, silent = false): Promise<void> {
   if (initial) loading.value = true;
@@ -110,7 +73,6 @@ async function load(initial = false, silent = false): Promise<void> {
   try {
     data.value = await api.overview();
     lastLoadedAt.value = Date.now();
-    await ensureGroupSelection();
   } catch (err) {
     error.value = err instanceof Error ? err.message : '总览加载失败';
   } finally {
@@ -214,48 +176,41 @@ onBeforeUnmount(() => {
         </router-link>
       </div>
 
-      <SectionCard title="策略组净值" subtitle="选择策略组查看净值曲线；净值由组内进程上报，同一 token 最后一次为准">
-        <template #extra>
-          <div class="nav-group-tabs">
-            <button
-              v-for="runner in data.runners"
-              :key="runner.id"
-              type="button"
-              :class="{ active: selectedGroupId === runner.id }"
-              @click="loadGroupNav(runner.id)"
-            >
-              <StatusDot :status="runner.status" :size="6" />
-              {{ runner.name }}
-            </button>
-          </div>
-        </template>
-        <div class="nav-panel" :class="{ dimmed: groupLoading }">
-          <div class="nav-panel-head">
-            <div>
-              <span class="nav-panel-label">{{ metric === 'nav' ? '策略组净值' : '策略组权益' }}</span>
-              <strong class="nav-panel-value mono">{{ metric === 'nav' ? chartValue : '¥' + fmtNumber(chartValue, 2) }}</strong>
-            </div>
-            <div class="nav-panel-side">
-              <div class="metric-tabs">
-                <button type="button" :class="{ active: metric === 'nav' }" @click="metric = 'nav'">净值</button>
-                <button type="button" :class="{ active: metric === 'equity' }" @click="metric = 'equity'">权益</button>
+      <div class="overview-main">
+        <SectionCard title="组合权益" subtitle="各策略组最新权益合计；曲线按组内进程上报的权益点合并">
+          <div class="nav-panel">
+            <div class="nav-panel-head">
+              <div>
+                <span class="nav-panel-label">组合总权益</span>
+                <strong class="nav-panel-value mono">{{ summary.totalEquity !== null ? '¥' + fmtNumber(summary.totalEquity, 2) : '—' }}</strong>
               </div>
-              <span class="nav-panel-meta">{{ chartUpdated ? '更新于 ' + fmtDateTime(chartUpdated) : '暂无上报' }}</span>
+              <span class="nav-panel-meta">{{ summary.equityAsOf ? '更新于 ' + fmtDateTime(summary.equityAsOf) : '暂无权益上报' }}</span>
             </div>
+            <NavChart :data="equityCurve" :height="260" />
           </div>
-          <NavChart :data="chartData" :height="220" />
-        </div>
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard title="策略组" :subtitle="'共 ' + data.runners.length + ' 个策略组 · 展开查看进程状态与最后消息'">
-        <template #extra>
-          <router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link>
-        </template>
-        <div v-if="data.runners.length" class="grid grid-2">
-          <GroupCard v-for="runner in data.runners" :key="runner.id" :runner="runner" />
-        </div>
-        <EmptyState v-else compact title="还没有策略组" description="前往「策略」页创建策略并生成接入令牌，即可开始接收进程心跳。" />
-      </SectionCard>
+        <SectionCard title="策略状态" subtitle="心跳 / 权益 / 最后消息">
+          <template #extra>
+            <router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link>
+          </template>
+          <div v-if="data.runners.length" class="status-list">
+            <router-link v-for="runner in data.runners" :key="runner.id" :to="'/strategies/' + runner.id" class="status-row">
+              <div class="status-row-top">
+                <span class="status-name"><StatusDot :status="runner.status" :size="7" /><span class="truncate">{{ runner.name }}</span></span>
+                <StatusTag :status="runner.status" compact />
+              </div>
+              <div class="status-row-mid">
+                <HeartbeatGrid :status="runner.status" :last-seen="runner.last_seen" />
+                <span class="status-proc mono">{{ runner.online_processes }}/{{ runner.process_count }} 进程</span>
+                <span class="status-equity mono">{{ runner.equity ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</span>
+              </div>
+              <p class="status-msg truncate">{{ runner.last_msg || runner.description || '暂无消息' }}</p>
+            </router-link>
+          </div>
+          <EmptyState v-else compact title="还没有策略组" description="前往「策略」页创建策略并生成接入令牌。" />
+        </SectionCard>
+      </div>
 
       <div class="grid grid-2">
         <SectionCard title="最近动态" subtitle="消息 / 信号合并 · SSE 实时追加">
@@ -290,6 +245,68 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.overview-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.status-row {
+  display: block;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(21, 28, 44, 0.45);
+  color: inherit;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.status-row:hover {
+  border-color: var(--border-strong);
+  background: rgba(91, 140, 255, 0.06);
+}
+.status-row-top,
+.status-row-mid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.status-row-top {
+  justify-content: space-between;
+}
+.status-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.status-row-mid {
+  margin-top: 9px;
+}
+.status-proc {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.status-equity {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.status-msg {
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+@media (max-width: 1100px) {
+  .overview-main { grid-template-columns: minmax(0, 1fr); }
+}
+
 .metric-tabs {
   display: inline-flex;
   padding: 2px;

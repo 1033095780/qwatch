@@ -10,7 +10,7 @@
     QWATCH_PASSWORD  登录密码，默认 qwatch
 
 每个策略一个 token，缓存复用 data/sim_tokens.json；进程名固定（rb / IF / ag / au），
-白银波段是双进程策略。SDK 不再上报 equity / pnl / nav。
+白银波段是双进程策略。SDK 上报策略组权益，不涉及 PnL。
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ STRATEGIES: list[dict[str, Any]] = [
         "description": "黑色系 15 分钟级别趋势跟踪，夜盘连续持有。",
         "processes": [
             {
-                "instrument": "rb", "contract": "rb2601", "base_price": 3510.0, "report_nav": True,
+                "instrument": "rb", "contract": "rb2601", "base_price": 3510.0, "report_equity": True,
                 "qty_range": (2, 8), "signal_seconds": (30, 45), "long_bias": 0.7,
                 "signals": ["均线金叉", "突破前高", "回踩确认", "趋势止盈", "ATR 止损"],
                 "messages": ["夜盘正常", "行情震荡", "等待突破"],
@@ -62,7 +62,7 @@ STRATEGIES: list[dict[str, Any]] = [
         "description": "IF 日内动量，开盘后半小时入场，收盘前平仓。",
         "processes": [
             {
-                "instrument": "IF", "contract": "IF2612", "base_price": 3985.0, "report_nav": True,
+                "instrument": "IF", "contract": "IF2612", "base_price": 3985.0, "report_equity": True,
                 "qty_range": (1, 3), "signal_seconds": (15, 25), "long_bias": 0.55,
                 "signals": ["开盘动能", "日内新高", "动量衰减", "止损离场", "收盘前平仓"],
                 "messages": ["盘中监控", "波动放大", "等待收盘"],
@@ -74,7 +74,7 @@ STRATEGIES: list[dict[str, Any]] = [
         "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%（ag / au 双进程）。",
         "processes": [
             {
-                "instrument": "ag", "contract": "ag2601", "base_price": 7700.0, "report_nav": True,
+                "instrument": "ag", "contract": "ag2601", "base_price": 7700.0, "report_equity": True,
                 "qty_range": (1, 5), "signal_seconds": (20, 40), "long_bias": 0.5,
                 "signals": ["贵金属走强", "波段减仓", "止盈离场", "ATR 止损"],
                 "messages": ["夜盘回补", "金银比修复"],
@@ -261,9 +261,8 @@ def _run_process(
     position: tuple[str, int] | None = None
     next_signal = time.monotonic() + rnd.uniform(*process["signal_seconds"])
     next_msg = time.monotonic() + rnd.uniform(20, 40)
-    nav = 1.0
     equity = 1_000_000.0
-    next_nav = time.monotonic() + rnd.uniform(10, 20)
+    next_equity = time.monotonic() + rnd.uniform(10, 20)
     try:
         while not stop.is_set():
             loops += 1
@@ -279,14 +278,12 @@ def _run_process(
                 msg_count += 1
                 print(f"[{label}] 动态 {text}")
                 next_msg = now + rnd.uniform(30, 60)
-            if now >= next_nav and process.get("report_nav"):
+            if now >= next_equity and process.get("report_equity"):
                 growth = 1 + rnd.gauss(0.0004, 0.0015)
-                nav = max(0.01, nav * growth)
                 equity = max(1.0, equity * growth)
-                q.nav(round(nav, 6))
                 q.equity(round(equity, 2))
-                print(f"[{label}] 净值 {nav:.4f} 权益 {equity:.2f}")
-                next_nav = now + rnd.uniform(20, 40)
+                print(f"[{label}] 权益 {equity:.2f}")
+                next_equity = now + rnd.uniform(20, 40)
             stop.wait(TICK_S)
     finally:
         q.close()

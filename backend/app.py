@@ -236,6 +236,42 @@ def nav_sparkline(conn: sqlite3.Connection, runner_id: str) -> list[float]:
     return [round(float(row["nav"]), 6) for row in reversed(rows)]
 
 
+def equity_sparkline(conn: sqlite3.Connection, runner_id: str) -> list[float]:
+    rows = conn.execute(
+        "SELECT equity FROM equity_points WHERE runner_id = ? ORDER BY id DESC LIMIT 24", (runner_id,)
+    ).fetchall()
+    return [round(float(row["equity"]), 2) for row in reversed(rows)]
+
+
+def portfolio_equity_curve(conn: sqlite3.Connection, runner_ids: list[str]) -> list[dict[str, str]]:
+    """把各策略组权益点合并成组合权益曲线；每个时间点取各组最近一次权益后求和。"""
+    per_runner: dict[str, list[tuple[str, float]]] = {}
+    for rid in runner_ids:
+        rows = conn.execute(
+            "SELECT ts, equity FROM equity_points WHERE runner_id = ? ORDER BY id DESC LIMIT 500", (rid,)
+        ).fetchall()
+        if rows:
+            per_runner[rid] = [(row["ts"], float(row["equity"])) for row in reversed(rows)]
+    if not per_runner:
+        return []
+    timeline = sorted({ts for series in per_runner.values() for ts, _ in series})
+    latest: dict[str, float] = {}
+    pointers: dict[str, int] = {rid: 0 for rid in per_runner}
+    required = set(per_runner)
+    curve: list[dict[str, str]] = []
+    for ts in timeline:
+        for rid, series in per_runner.items():
+            idx = pointers[rid]
+            while idx < len(series) and series[idx][0] <= ts:
+                latest[rid] = series[idx][1]
+                idx += 1
+            pointers[rid] = idx
+        # 等所有策略组都有权益点后再画组合曲线，避免逐组上线造成假的垂直跳变
+        if required.issubset(latest):
+            curve.append({"ts": ts, "value": f"{sum(latest.values()):.2f}"})
+    return curve[-500:]
+
+
 def event_view(row) -> dict[str, Any]:
     keys = set(row.keys())
     return {
@@ -533,6 +569,7 @@ def list_runners(
             statuses = {row["id"]: process_status(row, now_dt(), bool(runner["paused"])) for row in rows}
             view = runner_view(runner, rows, statuses)
             view["nav_sparkline"] = nav_sparkline(conn, runner["id"])
+            view["equity_sparkline"] = equity_sparkline(conn, runner["id"])
             items.append(view)
     if status:
         items = [item for item in items if item["status"] == status]
@@ -568,6 +605,7 @@ def runner_detail(runner_id: str, user: str = Depends(require_user)) -> dict[str
         equity_curve = [{"ts": row["ts"], "value": f"{float(row['equity']):.2f}"} for row in equity_rows]
         runner_data = runner_view(runner, processes, statuses)
         runner_data["nav_sparkline"] = nav_sparkline(conn, runner_id)
+        runner_data["equity_sparkline"] = equity_sparkline(conn, runner_id)
         return {
             "runner": runner_data,
             "processes": [process_view(row, statuses[row["id"]], at, bool(runner["paused"])) for row in processes],
@@ -805,6 +843,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             statuses = {row["id"]: process_status(row, now_dt(), bool(runner["paused"])) for row in rows}
             view = runner_view(runner, rows, statuses)
             view["nav_sparkline"] = nav_sparkline(conn, runner["id"])
+            view["equity_sparkline"] = equity_sparkline(conn, runner["id"])
             views.append(view)
         processes_total = sum(1 for row in process_rows if not row["retired"])
         processes_online = 0
@@ -861,6 +900,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             "total_equity": f"{total_equity:.2f}" if has_equity else None,
             "today_equity_change": f"{total_equity - prev_equity:.2f}" if has_equity and has_prev_equity else None,
             "equity_as_of": equity_as_of,
+            "equity_curve": portfolio_equity_curve(conn, [runner["id"] for runner in runner_rows]),
             "runners": views,
         }
 

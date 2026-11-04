@@ -45,11 +45,7 @@ let reloadTimer: number | undefined;
 const runner = computed(() => detail.value?.runner ?? null);
 const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
-const navCurve = computed(() => detail.value?.nav_curve ?? []);
-const detailMetric = ref<'nav' | 'equity'>('nav');
-const detailChartData = computed(() => (detailMetric.value === 'nav' ? navCurve.value : detail.value?.equity_curve ?? []));
-const detailChartValue = computed(() => (detailMetric.value === 'nav' ? runner.value?.nav ?? '—' : runner.value?.equity ?? '—'));
-const detailChartUpdated = computed(() => (detailMetric.value === 'nav' ? runner.value?.nav_updated_at : runner.value?.equity_updated_at));
+const equityCurve = computed(() => detail.value?.equity_curve ?? []);
 const alerts = computed(() => [...(detail.value?.alerts ?? [])].sort((a, b) => Date.parse(b.starts_at) - Date.parse(a.starts_at)));
 const activeAlertCount = computed(() => alerts.value.filter((a) => a.status === 'firing').length);
 
@@ -260,16 +256,12 @@ onBeforeUnmount(() => {
           </div>
           <div class="nav-hero">
             <div class="nav-hero-main">
-              <span class="nav-hero-label">{{ detailMetric === 'nav' ? '策略净值' : '策略权益' }}</span>
-              <strong class="nav-hero-value mono">{{ detailMetric === 'nav' ? detailChartValue : '¥' + fmtNumber(detailChartValue, 2) }}</strong>
-              <span class="nav-hero-meta">{{ detailChartUpdated ? '更新于 ' + fmtDateTime(detailChartUpdated) : '暂无上报' }}</span>
-              <div class="detail-metric-tabs">
-                <button type="button" :class="{ active: detailMetric === 'nav' }" @click="detailMetric = 'nav'">净值</button>
-                <button type="button" :class="{ active: detailMetric === 'equity' }" @click="detailMetric = 'equity'">权益</button>
-              </div>
-              <span class="nav-hero-note">净值由组内进程上报，同一 token 以最后一次为准；品种不单独计算净值。</span>
+              <span class="nav-hero-label">策略权益</span>
+              <strong class="nav-hero-value mono">{{ runner.equity ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</strong>
+              <span class="nav-hero-meta">{{ runner.equity_updated_at ? '更新于 ' + fmtDateTime(runner.equity_updated_at) : '暂无权益上报' }}</span>
+              <span class="nav-hero-note">权益由组内进程上报，同一 token 以最后一次为准；品种不单独计算权益。</span>
             </div>
-            <NavChart :data="detailChartData" :height="160" />
+            <NavChart :data="equityCurve" :height="160" />
           </div>
 
           <div class="status-grid">

@@ -1,7 +1,7 @@
 # qwatch Python SDK
 
 零依赖（标准库）策略接入库：**一个策略进程一个实例**，心跳、动态消息和交易信号统一走
-`POST /api/v1/report`，按进程分文件记录本地日志。v0.3 支持策略组净值/权益 `q.nav()` / `q.equity()`；不提供 PnL。
+`POST /api/v1/report`，按进程分文件记录本地日志。v0.3 支持策略组权益 `q.equity()`；不提供 PnL。
 
 ## 安装
 
@@ -48,7 +48,6 @@ Qwatch(base_url, token, heartbeat=30, timeout=5, queue_size=1000,
        instrument="rb", log_dir="logs", log_path=None)
 
 q.tick(last_tick=None) -> loop          # 主循环每轮调用；只更新 loop，不发请求
-q.nav(value)                            # 策略组净值，必须 > 0
 q.equity(value)                         # 策略组权益，必须 > 0
 q.msg(text)                             # 动态消息（也算心跳）
 q.signal(contract, direction, action, qty,
@@ -58,7 +57,7 @@ q.last_error                            # 最近一次失败原因
 q.close(flush_timeout=2.0)              # 停止自动心跳并尽力冲刷队列；支持 with
 ```
 
-不提供 `report` / `pnl` 方法；`nav()` / `equity()` 用于上报策略组净值/权益。
+不提供 `report` / `pnl` 方法；`equity()` 用于上报策略组权益。
 
 ## 行为
 

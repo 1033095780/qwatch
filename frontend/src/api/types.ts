@@ -37,6 +37,7 @@ export interface Runner {
   nav_sparkline?: number[];
   equity?: string | null;
   equity_updated_at?: string | null;
+  equity_sparkline?: number[];
   /** 以下为可选的展示辅助字段，后端未提供时前端不显示 */
   created_at?: string | null;
 }
@@ -100,6 +101,7 @@ export interface Overview {
   total_equity?: string | null;
   today_equity_change?: string | null;
   equity_as_of?: string | null;
+  equity_curve?: { ts: string; value: string }[];
   recent_alerts: Alert[];
   recent_events?: RunnerEvent[];
   runners: Runner[];
