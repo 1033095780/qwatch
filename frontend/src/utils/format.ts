@@ -1,14 +1,16 @@
 // utils/format.ts — 展示格式化：时间（Asia/Shanghai）、相对时间、数值；v0.2 不再有金额/收益格式。
+import { ref } from 'vue';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import 'dayjs/locale/zh-cn';
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
-dayjs.extend(relativeTime);
 dayjs.locale('zh-cn');
+
+/** 全局秒级时钟：模板里调用 fromNow 会自动每秒刷新。 */
+export const nowTick = ref(Date.now());
 
 export const TZ = 'Asia/Shanghai';
 
@@ -34,9 +36,17 @@ export function fmtTime(ts?: string | null): string {
   return ts ? dayjs(ts).tz(TZ).format('HH:mm:ss') : '—';
 }
 
-/** 相对时间：几秒前 / 3 分钟前 */
+/** 相对时间：精确到秒的实时刷新 */
 export function fromNow(ts?: string | null): string {
-  return ts ? dayjs(ts).fromNow() : '—';
+  if (!ts) return '—';
+  const diff = Math.max(0, Math.floor((nowTick.value - Date.parse(ts)) / 1000));
+  if (diff < 1) return '刚刚';
+  if (diff < 60) return diff + ' 秒前';
+  const minutes = Math.floor(diff / 60);
+  if (minutes < 60) return minutes + ' 分钟前';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + ' 小时前';
+  return Math.floor(hours / 24) + ' 天前';
 }
 
 /** 时长：90s / 3m20s / 2h */

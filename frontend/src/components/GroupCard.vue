@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // GroupCard.vue — 策略卡片：权益/曲线分层展示，进程健康一眼可见。
 import { computed, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { AlertTriangle, ChevronDown, ChevronUp } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { ProcessInfo, Runner } from '@/api/types';
@@ -12,6 +13,7 @@ import StatusDot from './StatusDot.vue';
 import StatusTag from './StatusTag.vue';
 
 const props = withDefaults(defineProps<{ runner: Runner; expandable?: boolean }>(), { expandable: true });
+const router = useRouter();
 const expanded = ref(false);
 const processes = ref<ProcessInfo[]>([]);
 const loaded = ref(false);
@@ -37,15 +39,18 @@ async function toggle(): Promise<void> {
   expanded.value = !expanded.value;
   if (expanded.value) await loadProcesses();
 }
+function goDetail(): void {
+  void router.push('/strategies/' + props.runner.id);
+}
 defineExpose({ reload: () => { loaded.value = false; if (expanded.value) { void loadProcesses(); } } });
 </script>
 
 <template>
-  <article class="group-card">
+  <article class="group-card" role="link" tabindex="0" @click="goDetail" @keydown.enter="goDetail">
     <header class="card-head">
       <div class="identity">
         <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
-        <router-link :to="'/strategies/' + runner.id" class="name truncate" :title="runner.name">{{ runner.name }}</router-link>
+        <router-link :to="'/strategies/' + runner.id" class="name truncate" :title="runner.name" @click.stop>{{ runner.name }}</router-link>
         <StatusTag :status="runner.status" compact />
       </div>
       <div class="head-right">
@@ -57,7 +62,7 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) { void 
           class="expand"
           :aria-expanded="expanded"
           aria-label="展开进程"
-          @click="toggle"
+          @click.stop="toggle"
         >
           <ChevronUp v-if="expanded" :size="14" />
           <ChevronDown v-else :size="14" />
@@ -82,7 +87,7 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) { void 
 
     <p class="desc truncate">{{ runner.last_msg ? '最后消息 · ' + runner.last_msg : runner.description || '暂无消息' }}</p>
 
-    <div v-if="expanded" class="sub">
+    <div v-if="expanded" class="sub" @click.stop>
       <div v-if="loading" class="sub-loading">加载进程…</div>
       <div v-else-if="error" class="error-bar"><span class="dot" />{{ error }}</div>
       <ProcessTable v-else :processes="processes" empty-text="还没有进程上报。" />
@@ -92,6 +97,7 @@ defineExpose({ reload: () => { loaded.value = false; if (expanded.value) { void 
 
 <style scoped>
 .group-card {
+  cursor: pointer;
   display: flex;
   flex-direction: column;
   padding: 15px 16px 13px;

@@ -9,6 +9,7 @@ import {
   RefreshCw, Settings as SettingsIcon,
 } from 'lucide-vue-next';
 import { api, apiMeta } from '@/api/client';
+import { nowTick } from '@/utils/format';
 import { streamMeta } from '@/api/stream';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -36,6 +37,7 @@ const isMobile = ref(false);
 const drawerOpen = ref(false);
 const alertCount = ref(0);
 let alertTimer: number | undefined;
+let clockTimer: number | undefined;
 let mql: MediaQueryList | null = null;
 
 const collapsed = computed(() => !isMobile.value && settings.collapsed);
@@ -114,6 +116,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('qwatch:alerts-changed', onAlertsChanged);
   alertTimer = window.setInterval(loadAlertCount, 60000);
+  clockTimer = window.setInterval(() => { nowTick.value = Date.now(); }, 1000);
   realtime.start();
   if (!auth.user) void auth.fetchMe();
   void loadAlertCount();
@@ -124,6 +127,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('qwatch:alerts-changed', onAlertsChanged);
   if (alertTimer) window.clearInterval(alertTimer);
+  if (clockTimer) window.clearInterval(clockTimer);
   realtime.stop();
 });
 </script>

@@ -9,6 +9,9 @@ body,
 #app {
   height: 100%;
 }
+html {
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0;
   background: var(--bg);
@@ -118,7 +121,6 @@ textarea {
   gap: var(--gap);
   max-width: var(--page-max);
   margin: 0 auto;
-  animation: page-in 160ms ease-out;
 }
 @keyframes page-in {
   from {
