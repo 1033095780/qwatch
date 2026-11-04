@@ -9,7 +9,6 @@ import { fmtDateTime } from '@/utils/format';
 import ChannelEditModal from '@/components/ChannelEditModal.vue';
 import EmptyState from '@/components/EmptyState.vue';
 import PageHeader from '@/components/PageHeader.vue';
-import StatusDot from '@/components/StatusDot.vue';
 
 const store = useSettingsStore();
 const message = useMessage();
@@ -70,11 +69,7 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="设置" subtitle="钉钉通知渠道 / 显示偏好">
-      <template #extra>
-        <span class="chip"><StatusDot :status="'running'" :size="6" /> 看门狗服务</span>
-      </template>
-    </PageHeader>
+    <PageHeader title="设置" />
 
     <div v-if="loading" class="page">
       <div class="skel" style="height: 48px; border-radius: 10px" />

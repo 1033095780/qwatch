@@ -2,7 +2,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { NButton, NDropdown, useMessage } from 'naive-ui';
-import { RefreshCw } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Alert } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -22,7 +21,6 @@ const message = useMessage();
 const activeItems = ref<Alert[]>([]);
 const historyItems = ref<Alert[]>([]);
 const loading = ref(true);
-const refreshing = ref(false);
 const error = ref('');
 const tab = ref('active');
 const busyId = ref('');
@@ -35,7 +33,6 @@ const silenceOptions = [
   { label: '静默 24 小时', key: '24h' },
 ];
 
-const firingCount = computed(() => activeItems.value.filter((a) => a.status === 'firing').length);
 const tabs = computed<TabItem[]>(() => [
   { key: 'active', label: '活跃', count: activeItems.value.length },
   { key: 'history', label: '历史', count: historyItems.value.length },
@@ -47,7 +44,6 @@ const currentItems = computed(() => {
 
 async function load(initial = false, silent = false): Promise<void> {
   if (initial) loading.value = true;
-  else if (!silent) refreshing.value = true;
   error.value = '';
   try {
     const [active, history] = await Promise.all([api.alerts('active'), api.alerts('history')]);
@@ -57,7 +53,6 @@ async function load(initial = false, silent = false): Promise<void> {
     if (!silent || !activeItems.value.length) error.value = err instanceof Error ? err.message : '告警加载失败';
   } finally {
     loading.value = false;
-    refreshing.value = false;
   }
 }
 
@@ -113,19 +108,12 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader
-      title="告警"
-      :subtitle="firingCount + ' 条触发中 · 共 ' + activeItems.length + ' 条活跃 · 心跳丢失 / 策略卡死统一 P0 红色告警'"
-    >
+    <PageHeader title="告警">
       <template #extra>
         <span class="live-hint" :class="{ live: realtime.live }">
           <StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />
-          {{ realtime.live ? '实时' : '轮询兜底' }}
+          {{ realtime.live ? '实时' : '轮询' }}
         </span>
-        <n-button size="small" :loading="refreshing" @click="load(false)">
-          <template #icon><RefreshCw :size="14" /></template>
-          刷新
-        </n-button>
       </template>
     </PageHeader>
 
@@ -155,8 +143,7 @@ onBeforeUnmount(() => {
             <span class="mono rule-key">{{ alert.rule }}</span>
             <span class="status-chip" :class="alert.status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
             <span class="spacer" />
-            <span class="time mono" :title="alert.starts_at">{{ fromNow(alert.starts_at) }}</span>
-            <span class="time-abs mono">{{ fmtDateTime(alert.starts_at) }}</span>
+            <span class="time mono" :title="fmtDateTime(alert.starts_at)">{{ fromNow(alert.starts_at) }}</span>
           </div>
           <p class="alert-summary">{{ alert.summary }}</p>
           <div class="alert-meta">

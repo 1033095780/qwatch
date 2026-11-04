@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { NButton, NInput, NSelect } from 'naive-ui';
-import { Plus, Search, SlidersHorizontal } from 'lucide-vue-next';
+import { Plus, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Runner, RunnerStatus } from '@/api/types';
 import { RUNNER_STATUS_LABELS } from '@/utils/catalog';
@@ -79,7 +79,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="策略" :subtitle="'策略组与进程状态 · 共 ' + runners.length + ' 组 · 一个 token = 一个策略组'">
+    <PageHeader title="策略">
       <template #extra>
         <n-button type="primary" size="small" @click="createOpen = true">
           <template #icon><Plus :size="14" /></template>
@@ -97,8 +97,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="toolbar-right">
         <span class="result mono">{{ filtered.length }} / {{ runners.length }}</span>
-        <button v-if="hasFilter" type="button" class="reset" @click="resetFilters">重置筛选</button>
-        <SlidersHorizontal :size="14" class="faint" />
+        <button v-if="hasFilter" type="button" class="reset" @click="resetFilters">重置</button>
       </div>
     </section>
 
@@ -107,7 +106,7 @@ onBeforeUnmount(() => {
       <n-button text size="tiny" @click="load(true)">重试</n-button>
     </div>
 
-    <div v-if="loading" class="grid grid-2">
+    <div v-if="loading" class="strategy-grid">
       <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 180px" />
     </div>
 
@@ -121,7 +120,7 @@ onBeforeUnmount(() => {
       </template>
     </EmptyState>
 
-    <div v-else class="grid grid-2">
+    <div v-else class="strategy-grid">
       <GroupCard v-for="runner in filtered" :key="runner.id" :runner="runner" />
     </div>
 
@@ -130,6 +129,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.strategy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--gap);
+}
+@media (max-width: 1100px) {
+  .strategy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 640px) {
+  .strategy-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 .toolbar {
   display: flex;
   align-items: center;

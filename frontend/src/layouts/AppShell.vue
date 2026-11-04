@@ -13,7 +13,6 @@ import { streamMeta } from '@/api/stream';
 import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
-import { fmtSecondsAgo } from '@/utils/format';
 import BrandMark from '@/components/BrandMark.vue';
 import StatusDot from '@/components/StatusDot.vue';
 
@@ -36,8 +35,6 @@ const settings = useSettingsStore();
 const isMobile = ref(false);
 const drawerOpen = ref(false);
 const alertCount = ref(0);
-const now = ref(Date.now());
-let clockTimer: number | undefined;
 let alertTimer: number | undefined;
 let mql: MediaQueryList | null = null;
 
@@ -59,10 +56,6 @@ const userOptions = computed(() => [
   { key: 'logout', label: '退出登录', icon: () => null },
 ]);
 
-const freshness = computed(() => {
-  void now.value;
-  return fmtSecondsAgo(apiMeta.lastResponseAt);
-});
 
 function isActive(to: string): boolean {
   return activePath.value === to || activePath.value.startsWith(to + '/');
@@ -120,7 +113,6 @@ onMounted(() => {
   mql.addEventListener('change', applyViewport);
   window.addEventListener('keydown', onKeydown);
   window.addEventListener('qwatch:alerts-changed', onAlertsChanged);
-  clockTimer = window.setInterval(() => { now.value = Date.now(); }, 5000);
   alertTimer = window.setInterval(loadAlertCount, 60000);
   realtime.start();
   if (!auth.user) void auth.fetchMe();
@@ -131,7 +123,6 @@ onBeforeUnmount(() => {
   mql?.removeEventListener('change', applyViewport);
   window.removeEventListener('keydown', onKeydown);
   window.removeEventListener('qwatch:alerts-changed', onAlertsChanged);
-  if (clockTimer) window.clearInterval(clockTimer);
   if (alertTimer) window.clearInterval(alertTimer);
   realtime.stop();
 });
@@ -187,8 +178,7 @@ onBeforeUnmount(() => {
             <StatusDot :status="streamChip.dot" :size="6" />
             <span class="stream-text">{{ streamChip.text }}</span>
           </span>
-          <span class="freshness num" title="数据新鲜度">{{ freshness }}</span>
-          <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
+            <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
             <RefreshCw :size="16" :class="{ spinning: apiMeta.pending > 0 }" />
           </button>
           <button
