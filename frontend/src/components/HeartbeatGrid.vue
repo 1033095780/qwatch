@@ -3,9 +3,10 @@
 import { computed } from 'vue';
 import type { ProcessStatus, RunnerStatus } from '@/api/types';
 
-const props = withDefaults(defineProps<{ status: RunnerStatus | ProcessStatus; retired?: boolean; lastSeen?: string | null }>(), {
+const props = withDefaults(defineProps<{ status: RunnerStatus | ProcessStatus; retired?: boolean; lastSeen?: string | null; stretch?: boolean }>(), {
   retired: false,
   lastSeen: null,
+  stretch: false,
 });
 
 const bars = computed(() => {
@@ -19,7 +20,7 @@ const bars = computed(() => {
 </script>
 
 <template>
-  <div class="hb-grid" :title="lastSeen ? '最后心跳 ' + lastSeen : '暂无心跳'" role="img" aria-label="心跳状态">
+  <div class="hb-grid" :class="{ stretch }" :title="lastSeen ? '最后心跳 ' + lastSeen : '暂无心跳'" role="img" aria-label="心跳状态">
     <span v-for="(tone, i) in bars" :key="i" class="hb-cell" :class="tone" />
   </div>
 </template>
@@ -37,6 +38,16 @@ const bars = computed(() => {
   height: 10px;
   border-radius: 1.5px;
   background: #2a3448;
+}
+.hb-grid.stretch {
+  display: flex;
+  width: 100%;
+  gap: 3px;
+}
+.hb-grid.stretch .hb-cell {
+  flex: 1;
+  width: auto;
+  height: 9px;
 }
 .hb-cell.ok { background: #2ecc8f; }
 .hb-cell.warn { background: #f5a524; }

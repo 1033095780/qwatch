@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // StrategyDetail.vue — 策略详情：一页运行概览 + 动态，配置收进令牌弹窗，减少 Tab 层级。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import { NButton, useDialog, useMessage } from 'naive-ui';
-import { AlertTriangle, KeyRound, Pause, Play } from 'lucide-vue-next';
+import { AlertTriangle, KeyRound, Pause, Play, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Alert, Runner, RunnerDetail } from '@/api/types';
+import type { Alert, Runner, RunnerDetail, RunnerEvent } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import ActivityFeed from '@/components/ActivityFeed.vue';
@@ -16,13 +16,10 @@ import ProcessTable from '@/components/ProcessTable.vue';
 import StatusDot from '@/components/StatusDot.vue';
 import StatusTag from '@/components/StatusTag.vue';
 import StrategyTokenModal from '@/components/StrategyTokenModal.vue';
-import TabBar from '@/components/TabBar.vue';
-import type { TabItem } from '@/components/TabBar.vue';
 import { fmtNumber, fromNow } from '@/utils/format';
 import { ruleLabel } from '@/utils/catalog';
 
 const route = useRoute();
-const router = useRouter();
 const dialog = useDialog();
 const message = useMessage();
 const realtime = useRealtimeStore();
@@ -35,9 +32,8 @@ const pauseBusy = ref(false);
 const processBusy = ref('');
 const tokenOpen = ref(false);
 const range = ref<'1D' | '1W' | '1M' | '3M' | 'ALL'>('1D');
-const activeTab = ref<'overview' | 'events'>('overview');
-const initialTab = String(route.query.tab || '');
-if (initialTab === 'events' || initialTab === 'dynamic') activeTab.value = 'events';
+const eventType = ref<'all' | 'message' | 'signal'>('all');
+const eventQuery = ref('');
 let pollTimer: number | undefined;
 let reloadTimer: number | undefined;
 
@@ -54,10 +50,16 @@ const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
 const alerts = computed(() => detail.value?.alerts ?? []);
 const firingAlerts = computed(() => alerts.value.filter((alert) => alert.status === 'firing'));
-const tabs = computed<TabItem[]>(() => [
-  { key: 'overview', label: '概览' },
-  { key: 'events', label: '动态', count: events.value.length },
-]);
+const filteredEvents = computed<RunnerEvent[]>(() => {
+  const keyword = eventQuery.value.trim().toLowerCase();
+  return events.value.filter((event) => {
+    if (eventType.value !== 'all' && event.type !== eventType.value) return false;
+    if (!keyword) return true;
+    return [event.text, event.symbol, event.instrument, event.runner_name]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(keyword));
+  });
+});
 const equityCurve = computed(() => {
   const curve = detail.value?.equity_curve ?? [];
   if (!curve.length) return [];
@@ -128,16 +130,10 @@ function toggleProcess(name: string, activate: boolean): void {
     },
   });
 }
-function openEvent(event: { runner_id?: string }): void {
-  if (event.runner_id) void router.push('/strategies/' + event.runner_id + '?tab=events');
-}
 function alertStatusText(alert: Alert): string {
   return alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复';
 }
 
-watch(() => route.query.tab, (tab) => {
-  if (String(tab) === 'events' || String(tab) === 'dynamic') activeTab.value = 'events';
-});
 watch(() => settings.refreshSeq, () => { void load(false); });
 watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt], scheduleReload);
 onMounted(() => {
@@ -200,36 +196,54 @@ onBeforeUnmount(() => {
         <NavChart :data="equityCurve" :height="220" />
       </section>
 
-      <section class="detail-body card">
-        <TabBar v-model="activeTab" :tabs="tabs" />
+      <section class="detail-grid">
+        <div class="left-column">
+          <section class="card block-card">
+            <div class="block-head">
+              <div><h3>进程</h3><span class="block-sub">{{ runner.process_count > 1 ? runner.online_processes + ' / ' + runner.process_count + ' 在线' : '单进程运行' }}</span></div>
+              <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
+            </div>
+            <ProcessTable
+              :processes="processes"
+              :busy="processBusy"
+              actionable
+              empty-text="进程首次上报后会自动出现。"
+              @retire="(name) => toggleProcess(name, false)"
+              @activate="(name) => toggleProcess(name, true)"
+            />
+          </section>
 
-        <div v-if="activeTab === 'overview'" class="overview-panel">
-          <div class="section-line">
-            <div><h3>进程</h3><p>{{ runner.process_count > 1 ? runner.online_processes + ' / ' + runner.process_count + ' 在线' : '单进程运行' }}</p></div>
-            <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
-          </div>
-          <ProcessTable
-            :processes="processes"
-            :busy="processBusy"
-            actionable
-            empty-text="进程首次上报后会自动出现。"
-            @retire="(name) => toggleProcess(name, false)"
-            @activate="(name) => toggleProcess(name, true)"
-          />
-
-          <div v-if="alerts.length" class="recent-alerts">
-            <div class="section-line"><h3>最近告警</h3><router-link to="/alerts" class="inline-link">告警中心</router-link></div>
+          <section v-if="alerts.length" class="card block-card">
+            <div class="block-head">
+              <div><h3>最近告警</h3><span class="block-sub">{{ alerts.length }} 条</span></div>
+              <router-link to="/alerts" class="inline-link">告警中心</router-link>
+            </div>
             <router-link v-for="alert in alerts.slice(0, 3)" :key="alert.id" to="/alerts" class="alert-line">
               <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
               <span class="alert-text">{{ alert.summary }}</span>
               <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
             </router-link>
-          </div>
+          </section>
         </div>
 
-        <div v-else class="events-panel">
-          <ActivityFeed :events="events" empty-title="暂无动态" empty-desc="策略发送消息或信号后会出现在这里。" />
-        </div>
+        <section class="card activity-card">
+          <div class="block-head activity-title">
+            <div><h3>动态</h3><span class="block-sub">{{ filteredEvents.length }} 条</span></div>
+            <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
+          </div>
+          <div class="activity-tools">
+            <div class="event-search">
+              <Search :size="13" />
+              <input v-model="eventQuery" type="search" placeholder="搜索消息 / 合约 / 品种" />
+            </div>
+            <div class="event-filter">
+              <button v-for="item in [{ k: 'all', l: '全部' }, { k: 'message', l: '消息' }, { k: 'signal', l: '信号' }]" :key="item.k" type="button" :class="{ active: eventType === item.k }" @click="eventType = item.k as 'all' | 'message' | 'signal'">{{ item.l }}</button>
+            </div>
+          </div>
+          <div class="activity-scroll">
+            <ActivityFeed :events="filteredEvents" empty-title="暂无动态" empty-desc="策略发送消息或信号后会出现在这里。" />
+          </div>
+        </section>
       </section>
     </template>
 
@@ -249,14 +263,13 @@ onBeforeUnmount(() => {
 .detail-range button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
 .detail-range button.active { background: var(--primary-soft); color: var(--text); }
 .chart-card { padding: 10px 18px 12px; }
-.detail-body { padding-top: 4px; }
-.overview-panel { padding: 14px 0 4px; }
-.section-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin: 18px 0 10px; }
-.section-line:first-child { margin-top: 0; }
-.section-line h3 { font-size: 13px; color: var(--text); }
-.section-line p { margin-top: 2px; color: var(--text-3); font-size: 10px; }
+.detail-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: var(--gap); align-items: start; }
+.left-column { display: flex; flex-direction: column; gap: var(--gap); }
+.block-card { padding: 16px 18px; }
+.block-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 11px; }
+.block-head h3 { font-size: 14px; font-weight: 600; color: #ffffff; }
+.block-sub { display: block; margin-top: 2px; color: var(--text-3); font-size: 10px; }
 .inline-link { color: var(--text-3); font-size: 10px; }
-.recent-alerts { margin-top: 20px; }
 .alert-line { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); color: inherit; }
 .alert-line:last-child { border-bottom: 0; }
 .rule-chip { flex: 0 0 auto; padding: 2px 5px; border: 1px solid rgba(240, 68, 56, 0.25); border-radius: 4px; color: #f47c74; font-size: 9px; }
@@ -264,10 +277,25 @@ onBeforeUnmount(() => {
 .alert-status { font-size: 9px; color: var(--text-3); white-space: nowrap; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
-.events-panel { padding-top: 12px; }
+.activity-card { display: flex; flex-direction: column; min-height: 430px; padding: 16px 18px; }
+.activity-title { margin-bottom: 10px; }
+.activity-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.event-search { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 150px; height: 29px; padding: 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-3); }
+.event-search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--text); font-size: 11px; }
+.event-filter { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.event-filter button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
+.event-filter button.active { background: var(--primary-soft); color: var(--text); }
+.activity-scroll { flex: 1; min-height: 0; max-height: 470px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.activity-scroll::-webkit-scrollbar { width: 5px; }
+.activity-scroll::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
+.activity-scroll::-webkit-scrollbar-track { background: transparent; }
+@media (max-width: 900px) {
+  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 640px) {
   .hero-break { align-items: flex-start; flex-direction: column; }
   .hero-equity { font-size: 26px; }
   .detail-range { align-self: flex-end; }
+  .activity-card { min-height: 360px; }
 }
 </style>

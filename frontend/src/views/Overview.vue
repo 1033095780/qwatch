@@ -2,7 +2,7 @@
 // Overview.vue — v0.3 总览：总权益/权益曲线 + 策略状态（可展开进程、异常可见）+ 实时动态/告警。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bell, ChevronRight, TrendingUp, Wallet, Waves } from 'lucide-vue-next';
+import { Activity, Bell, ChevronRight, TrendingUp, Wallet } from 'lucide-vue-next';
 import { api } from '@/api/client';
 import type { Overview, Runner, RunnerDetail, RunnerEvent } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
@@ -47,8 +47,6 @@ const summary = computed(() => {
     total: ov.total ?? 0,
     running: ov.running ?? 0,
     activeAlerts: ov.active_alerts ?? 0,
-    processesTotal: ov.processes_total ?? 0,
-    processesOnline: ov.processes_online ?? 0,
     totalEquity: ov.total_equity ?? null,
     todayEquityChange: ov.today_equity_change ?? null,
   };
@@ -63,7 +61,7 @@ const recentEvents = computed(() => {
   const live = realtime.events;
   const initial = data.value?.recent_events || [];
   const ids = new Set(live.map((event) => String(event.id)));
-  return [...live, ...initial.filter((event) => !ids.has(String(event.id)))].slice(0, 6);
+  return [...live, ...initial.filter((event) => !ids.has(String(event.id)))].slice(0, 20);
 });
 const recentAlerts = computed(() => (data.value?.recent_alerts || []).slice(0, 4));
 const sourceCurve = computed(() => (selectedStrategy.value === 'all'
@@ -115,7 +113,7 @@ function selectStrategy(id: string): void {
   void loadSelected(id);
 }
 function openEvent(event: RunnerEvent): void {
-  if (event.runner_id) void router.push('/strategies/' + event.runner_id + '?tab=events');
+  if (event.runner_id) void router.push('/strategies/' + event.runner_id);
 }
 function issueCount(runner: Runner): number {
   return Math.max(0, (runner.process_count || 0) - (runner.online_processes || 0));
@@ -168,9 +166,9 @@ onBeforeUnmount(() => {
           <div class="ov-kpi-foot">较今日基线</div>
         </div>
         <div class="ov-kpi">
-          <div class="ov-kpi-top"><span>进程在线</span><Waves :size="15" /></div>
-          <div class="ov-kpi-value">{{ summary.processesOnline }}<span class="dim"> / {{ summary.processesTotal }}</span></div>
-          <div class="ov-kpi-foot">全部策略组进程</div>
+          <div class="ov-kpi-top"><span>策略在线</span><Activity :size="15" /></div>
+          <div class="ov-kpi-value">{{ summary.running }}<span class="dim"> / {{ summary.total }}</span></div>
+          <div class="ov-kpi-foot">共 {{ summary.total }} 个策略组</div>
         </div>
         <router-link to="/alerts" class="ov-kpi link" :class="{ danger: summary.activeAlerts > 0 }">
           <div class="ov-kpi-top"><span>活跃告警</span><Bell :size="15" :class="{ danger: summary.activeAlerts > 0 }" /></div>
@@ -200,17 +198,10 @@ onBeforeUnmount(() => {
             <router-link v-for="runner in data.runners" :key="runner.id" :to="'/strategies/' + runner.id" class="status-row">
               <div class="status-row-top">
                 <span class="status-name"><StatusDot :status="runner.status" :size="7" /><span class="truncate">{{ runner.name }}</span><StatusTag :status="runner.status" compact /></span>
-                <span class="status-right">
-                  <span v-if="issueCount(runner) && runner.status !== 'paused'" class="issue">{{ issueCount(runner) }} 个进程异常</span>
-                  <span v-else-if="runner.process_count > 1" class="proc-count">{{ runner.process_count }} 个进程</span>
-                </span>
-              </div>
-              <div class="status-row-mid">
-                <HeartbeatGrid :status="runner.status" :last-seen="runner.last_seen" />
                 <span class="row-equity mono">{{ runner.equity ? '¥' + fmtNumber(runner.equity, 2) : '—' }}</span>
-                <span class="last-seen">{{ runner.last_seen ? fromNow(runner.last_seen) : '从未上报' }}</span>
               </div>
-              <p class="status-msg truncate">{{ runner.last_msg || runner.description || '暂无消息' }}</p>
+              <HeartbeatGrid stretch :status="runner.status" :last-seen="runner.last_seen" />
+              <span v-if="issueCount(runner) && runner.status !== 'paused'" class="status-issue">{{ issueCount(runner) }} 个进程异常</span>
             </router-link>
           </div>
           <EmptyState v-else compact title="还没有策略组" description="前往「策略」页创建策略并生成接入令牌。" />
@@ -220,7 +211,9 @@ onBeforeUnmount(() => {
       <div class="grid grid-2">
         <SectionCard title="实时动态">
           <template #extra><span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span></template>
-          <ActivityFeed :events="recentEvents" show-runner clickable empty-title="暂无动态" empty-desc="策略上报消息或信号后会出现在这里。" @select="openEvent" />
+          <div class="activity-scroll">
+            <ActivityFeed :events="recentEvents" show-runner clickable empty-title="暂无动态" empty-desc="策略上报消息或信号后会出现在这里。" @select="openEvent" />
+          </div>
         </SectionCard>
         <SectionCard title="最近告警">
           <template #extra><router-link to="/alerts" class="link-more">告警中心 <ChevronRight :size="13" /></router-link></template>
@@ -241,8 +234,8 @@ onBeforeUnmount(() => {
 <style scoped>
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
 .ov-kpi { display: flex; flex-direction: column; align-items: flex-start; min-height: 104px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: linear-gradient(145deg, rgba(29, 38, 58, 0.7), rgba(17, 23, 36, 0.7)); color: inherit; }
-.ov-kpi-top { width: 100%; display: flex; align-items: center; justify-content: space-between; color: #ffffff; font-size: 11px; }
-.ov-kpi-value { width: 100%; margin-top: 10px; font-family: var(--font-mono); font-size: 26px; font-weight: 600; letter-spacing: -0.04em; color: #ffffff; text-align: left; white-space: nowrap; }
+.ov-kpi-top { width: 100%; display: flex; align-items: center; justify-content: space-between; color: #ffffff; font-size: 12px; font-weight: 600; }
+.ov-kpi-value { width: 100%; margin-top: 10px; font-family: var(--font-mono); font-size: 26px; font-weight: 700; letter-spacing: -0.04em; color: #ffffff; text-align: left; white-space: nowrap; }
 .ov-kpi-value.equity { font-size: 23px; }
 .ov-kpi-value.up { color: var(--up); }
 .ov-kpi-value.down { color: var(--down); }
@@ -276,10 +269,13 @@ onBeforeUnmount(() => {
 .status-right { display: inline-flex; align-items: center; gap: 7px; }
 .issue { color: #f5b64b; font-size: 10px; }
 .proc-count { color: var(--text-3); font-size: 10px; }
-.status-row-mid { margin-top: 9px; }
-.row-equity { margin-left: auto; font-size: 12px; color: var(--text-2); }
-.last-seen { font-size: 10px; color: var(--text-3); }
-.status-msg { margin-top: 6px; font-size: 10px; color: var(--text-3); }
+.status-row :deep(.hb-grid) { margin-top: 13px; }
+.row-equity { font-size: 12px; color: #e4ebf7; }
+.status-issue { display: block; margin-top: 7px; color: #f5b64b; font-size: 10px; }
+.activity-scroll { max-height: 312px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.activity-scroll::-webkit-scrollbar { width: 5px; }
+.activity-scroll::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
+.activity-scroll::-webkit-scrollbar-track { background: transparent; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
 .alert-feed { display: flex; flex-direction: column; }

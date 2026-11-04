@@ -16,7 +16,7 @@ const emit = defineEmits<{ select: [event: RunnerEvent] }>();
 </script>
 
 <template>
-  <div v-if="events.length" class="feed">
+  <TransitionGroup v-if="events.length" name="feed" tag="div" class="feed">
     <article
       v-for="(event, index) in events"
       :key="String(event.id)"
@@ -52,7 +52,7 @@ const emit = defineEmits<{ select: [event: RunnerEvent] }>();
       </div>
       <ArrowUpRight v-if="clickable" :size="13" class="go" />
     </article>
-  </div>
+  </TransitionGroup>
   <EmptyState v-else compact :title="emptyTitle" :description="emptyDesc" />
 </template>
 
@@ -60,6 +60,21 @@ const emit = defineEmits<{ select: [event: RunnerEvent] }>();
 .feed {
   display: flex;
   flex-direction: column;
+}
+.feed-enter-active,
+.feed-leave-active {
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+.feed-enter-from {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.feed-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.feed-move {
+  transition: transform 260ms ease;
 }
 .feed-row {
   display: grid;

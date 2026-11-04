@@ -859,7 +859,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
         ).fetchall()
         event_rows = conn.execute(
             "SELECT e.*, r.name AS runner_name FROM events e LEFT JOIN runners r ON r.id = e.runner_id "
-            "ORDER BY e.id DESC LIMIT 8"
+            "ORDER BY e.id DESC LIMIT 30"
         ).fetchall()
         active_alerts = conn.execute("SELECT COUNT(*) AS n FROM alerts WHERE status = 'firing'").fetchone()["n"]
         total_equity = 0.0
