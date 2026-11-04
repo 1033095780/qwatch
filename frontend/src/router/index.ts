@@ -51,9 +51,13 @@ const router = createRouter({
   ],
 });
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const auth = useAuthStore();
   document.title = (to.meta.title ? to.meta.title + ' · ' : '') + 'qwatch 监控工作台';
+  // 有 token 但用户信息还没校验时，先进页面之前校验一次，避免过期 token 渲染出错误页。
+  if (auth.isAuthenticated && !auth.user) {
+    await auth.fetchMe();
+  }
   if (!to.meta.public && !auth.isAuthenticated) {
     return { path: '/login', query: { next: to.fullPath } };
   }

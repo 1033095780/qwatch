@@ -21,12 +21,14 @@ app.use(pinia);
 app.use(router);
 
 window.addEventListener('qwatch:unauthorized', () => {
+  // token 可能已经在 fetchMe 中被清掉；这里不能因为 isAuthenticated=false 就提前返回。
   const auth = useAuthStore(pinia);
-  if (!auth.isAuthenticated) return;
   auth.logout(false);
   const current = router.currentRoute.value;
   if (current.name !== 'login') {
-    router.replace({ path: '/login', query: { next: current.fullPath } });
+    // 直接整页跳转，避免过期页面先渲染出错误条再慢慢切路由。
+    const next = encodeURIComponent(current.fullPath);
+    window.location.replace('/login?next=' + next);
   }
 });
 

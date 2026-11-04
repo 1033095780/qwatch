@@ -34,6 +34,8 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = res.user;
     } catch {
       logout(false);
+      // 让全局 401 处理器把当前页面直接送回登录页。
+      window.dispatchEvent(new CustomEvent('qwatch:unauthorized'));
     }
   }
 
