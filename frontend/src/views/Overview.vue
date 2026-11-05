@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
               <div class="ov-row-main">
                 <div class="ov-row-value"><span>策略权益</span><strong class="mono">{{ runner.equity !== null && runner.equity !== undefined ? '¥' + fmtNumber(runner.equity, 0) : '—' }}</strong></div>
                 <span class="ov-row-today" :class="Number(runner.today_pnl) >= 0 ? 'up' : 'down'">今日 {{ runner.today_pnl !== null && runner.today_pnl !== undefined ? (Number(runner.today_pnl) >= 0 ? '+' : '') + fmtNumber(runner.today_pnl, 0) : '—' }}</span>
-                <NavSparkline v-if="runner.equity_sparkline?.length" class="spark" :values="runner.equity_sparkline" :width="96" :height="28" />
+                <NavSparkline v-if="runner.equity_sparkline?.length" class="spark" :values="runner.equity_sparkline" :width="116" :height="30" />
               </div>
               <div class="ov-row-foot">
                 <span>{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
@@ -284,14 +284,14 @@ onBeforeUnmount(() => {
 .ov-kpi-value.danger, .danger { color: var(--danger); }
 .ov-kpi-foot { margin-top: auto; padding-top: 6px; color: #cbd5e5; font-size: 10px; }
 .ov-kpi.link:hover { border-color: var(--border-strong); }
-.overview-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: stretch; }
+.overview-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.72fr) minmax(360px, 0.95fr); gap: var(--gap); align-items: stretch; }
 .overview-main > :deep(.section-card) { height: 100%; min-height: 0; }
 .overview-main :deep(.panel-head) { flex: none; }
 .chart-wrap { flex: 1; min-height: 0; display: flex; }
 .chart-wrap :deep(.nav-chart) { height: 100% !important; }
 .overview-main .strategy-column { flex: 1; min-height: 0; max-height: none; }
 .ov-status-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.ov-status-row { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: rgba(21, 28, 44, 0.38); color: inherit; transition: border-color 150ms ease, background-color 150ms ease; }
+.ov-status-row { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 5px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 8px; background: rgba(21, 28, 44, 0.38); color: inherit; transition: border-color 150ms ease, background-color 150ms ease; }
 .ov-status-row:hover { border-color: var(--border-strong); background: rgba(26, 35, 54, 0.7); }
 .ov-row-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .ov-row-name { min-width: 0; color: #fff; font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -301,7 +301,7 @@ onBeforeUnmount(() => {
 .ov-row-value span { color: var(--text-3); font-size: 9px; }
 .ov-row-value strong { color: #fff; font: 600 21px/1.1 var(--font-mono); letter-spacing: -0.03em; white-space: nowrap; }
 .ov-row-today { padding-bottom: 2px; font: 10px var(--font-mono); white-space: nowrap; }
-.ov-row-main .spark { margin-left: auto; width: 96px; flex: none; opacity: 0.9; }
+.ov-row-main .spark { margin-left: auto; width: 116px; flex: none; opacity: 0.9; }
 .ov-row-foot { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--text-3); font: 9px var(--font-mono); }
 .ov-row-foot .hb-grid { flex: 1; min-width: 0; }
 .up { color: var(--up) !important; }
@@ -337,10 +337,26 @@ onBeforeUnmount(() => {
 .alert-status { font-size: 9px; color: var(--text-3); white-space: nowrap; }
 .link-more { display: inline-flex; align-items: center; gap: 1px; color: var(--text-3); font-size: 10px; }
 .link-more:hover { color: var(--text-2); }
-@media (max-height: 760px) {
-  .overview-page { height: auto; overflow: visible; }
-  .overview-main { min-height: 460px; flex: none; }
-  .overview-bottom { height: 240px; }
+@media (max-height: 820px) {
+  .overview-page { gap: 12px; }
+  .overview-page > .summary-grid { height: 88px; }
+  .ov-kpi { min-height: 80px; padding: 9px 12px; }
+  .ov-kpi-value { margin-top: 6px; font-size: 22px; }
+  .ov-kpi-foot { font-size: 8px; }
+  .overview-bottom { height: 170px; }
+  .ov-status-list { gap: 6px; }
+  .ov-status-row { padding: 6px 9px; gap: 3px; }
+  .ov-row-name { font-size: 11px; }
+  .ov-row-value span { display: none; }
+  .ov-row-value strong { font-size: 18px; }
+  .ov-row-main { align-items: center; gap: 8px; }
+  .ov-row-main .spark { width: 104px; }
+  .ov-row-foot { font-size: 8px; }
+  .ov-row-foot > span:first-child { display: none; }
+  .overview-bottom :deep(.empty) { padding: 6px 4px; }
+  .overview-bottom :deep(.icon) { width: 26px; height: 26px; margin-bottom: 3px; border-radius: 8px; }
+  .overview-bottom :deep(.title) { font-size: 11px; }
+  .overview-bottom :deep(.desc) { display: none; }
 }
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
