@@ -15,6 +15,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import BrandMark from '@/components/BrandMark.vue';
+import StatusControls from '@/components/StatusControls.vue';
 import StatusDot from '@/components/StatusDot.vue';
 
 interface NavItem { to: string; label: string; icon: Component; badge?: boolean }
@@ -43,6 +44,8 @@ let mql: MediaQueryList | null = null;
 const collapsed = computed(() => !isMobile.value && settings.collapsed);
 const activePath = computed(() => route.path);
 const breadcrumbParent = computed(() => route.meta.parent || null);
+const isOverview = computed(() => route.name === 'overview');
+const showTopbar = computed(() => !isOverview.value || isMobile.value);
 
 const streamChip = computed(() => {
   if (realtime.live) return { text: '实时', dot: 'running' as const, title: 'SSE 实时连接正常' };
@@ -164,7 +167,7 @@ onBeforeUnmount(() => {
     <div v-if="isMobile && drawerOpen" class="overlay" @click="drawerOpen = false" />
 
     <div class="main">
-      <header class="topbar">
+      <header v-if="showTopbar" class="topbar">
         <div class="topbar-left">
           <button class="icon-btn" type="button" :aria-label="isMobile ? '打开菜单' : collapsed ? '展开侧栏' : '收起侧栏'" @click="onMenuClick">
             <component :is="isMobile ? Menu : collapsed ? PanelLeftOpen : PanelLeftClose" :size="17" />
@@ -177,31 +180,7 @@ onBeforeUnmount(() => {
             <span class="current">{{ route.meta.title }}</span>
           </div>
         </div>
-        <div class="topbar-right">
-          <span class="stream-chip" :title="streamChip.title">
-            <StatusDot :status="streamChip.dot" :size="6" />
-            <span class="stream-text">{{ streamChip.text }}</span>
-          </span>
-            <button class="icon-btn" type="button" aria-label="刷新" title="刷新全部数据" @click="onRefresh">
-            <RefreshCw :size="16" :class="{ spinning: apiMeta.pending > 0 }" />
-          </button>
-          <button
-            class="icon-btn bell"
-            :class="{ 'has-alerts': alertCount > 0 }"
-            type="button"
-            aria-label="告警中心"
-            title="告警中心"
-            @click="router.push('/alerts')"
-          >
-            <Bell :size="17" />
-            <span v-if="alertCount > 0" class="bell-dot">{{ alertCount > 9 ? '9+' : alertCount }}</span>
-          </button>
-          <n-dropdown trigger="click" :options="userOptions" @select="onUserSelect">
-            <button class="avatar" type="button" :aria-label="'账号：' + (auth.user?.name || 'Trader')">
-              {{ (auth.user?.name || 'T').slice(0, 1).toUpperCase() }}
-            </button>
-          </n-dropdown>
-        </div>
+        <StatusControls />
       </header>
       <main class="content">
         <router-view v-slot="{ Component: ViewComponent }">
