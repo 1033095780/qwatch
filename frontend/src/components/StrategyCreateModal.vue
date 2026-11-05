@@ -1,7 +1,7 @@
 // StrategyCreateModal.vue — v0.5 新建策略：必须选择已有账户；无账户时可在弹窗内直接创建账户。
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { NButton, NForm, NFormItem, NInput, NModal, NAutoComplete, useMessage } from 'naive-ui';
+import { NButton, NForm, NFormItem, NInput, NModal, NSelect, useMessage } from 'naive-ui';
 import type { FormInst, FormRules } from 'naive-ui';
 import { AlertTriangle, CheckCircle2, Copy } from 'lucide-vue-next';
 import { api } from '@/api/client';
@@ -119,10 +119,12 @@ async function copyToken(): Promise<void> {
           <n-input v-model:value="form.name" placeholder="如 螺纹钢趋势" maxlength="40" show-count />
         </n-form-item>
         <n-form-item label="所属账户" path="account">
-          <n-auto-complete
+          <n-select
             v-model:value="form.account"
             :options="accountOptions"
             :loading="loadingAccounts"
+            filterable
+            tag
             placeholder="选择账户，或直接输入新账户名"
           />
         </n-form-item>
