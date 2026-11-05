@@ -17,6 +17,12 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
   routes: [
     {
+      path: '/bigscreen',
+      name: 'bigscreen',
+      component: () => import('@/views/bigscreen/BigScreenPreview.vue'),
+      meta: { title: '大屏总览预览' },
+    },
+    {
       path: '/login',
       name: 'login',
       component: () => import('@/views/Login.vue'),
