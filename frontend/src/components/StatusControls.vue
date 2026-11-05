@@ -77,7 +77,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .status-controls { display: flex; align-items: center; gap: 6px; }
 .stream { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); font-size: 10px; white-space: nowrap; }
-.ctl { position: relative; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-2); cursor: pointer; }
+.ctl { position: relative; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; }
 .ctl:hover { border-color: var(--border); background: var(--surface-2); color: var(--text); }
 .ctl.has-alerts { color: #ff8f86; background: rgba(240,68,56,.08); border-color: rgba(240,68,56,.2); }
 .dot { position: absolute; top: -4px; right: -5px; min-width: 15px; height: 15px; padding: 0 3px; display: grid; place-items: center; border-radius: 8px; border: 2px solid var(--bg); background: #f04438; color: #fff; font: 9px var(--font-mono); }

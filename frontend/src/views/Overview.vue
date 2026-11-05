@@ -9,14 +9,13 @@ import type { Account, CurvePoint, Overview, RunnerEvent } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtNumber, fromNow } from '@/utils/format';
-import { ruleLabel } from '@/utils/catalog';
 import EmptyState from '@/components/EmptyState.vue';
 import GroupCard from '@/components/GroupCard.vue';
 import NavChart from '@/components/NavChart.vue';
 import NavSparkline from '@/components/NavSparkline.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
-import StatusControls from '@/components/StatusControls.vue';
+import StatusDot from '@/components/StatusDot.vue';
 
 const settings = useSettingsStore();
 const realtime = useRealtimeStore();
@@ -158,9 +157,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page overview-page">
-    <PageHeader title="总览">
-      <template #extra><StatusControls /></template>
-    </PageHeader>
+    <PageHeader title="总览" />
 
     <div v-if="loading && !data" class="skeleton-page">
       <div class="summary-grid">
@@ -231,22 +228,29 @@ onBeforeUnmount(() => {
         </SectionCard>
       </div>
 
-      <div class="overview-ticker">
-        <div class="ticker-feed">
-          <div class="ticker-head"><span>动态</span><span class="ticker-live"><i />实时</span></div>
-          <button v-for="event in recentEvents.slice(0, 2)" :key="event.id" type="button" class="ticker-event" @click="openEvent(event)">
-            <span class="ticker-type" :class="event.type">{{ event.type === 'signal' ? '信号' : '消息' }}</span>
-            <strong>{{ event.runner_name || event.instrument }}</strong>
-            <span class="ticker-text">{{ event.type === 'signal' ? event.symbol + ' ' + event.action + ' ' + event.qty : event.text }}</span>
-            <time>{{ fromNow(event.ts) }}</time>
-          </button>
-        </div>
-        <router-link to="/alerts" class="ticker-alert" :class="{ active: summary.activeAlerts > 0 }">
-          <span class="ticker-alert-label">告警</span>
-          <strong>{{ summary.activeAlerts }}</strong>
-          <span>{{ summary.activeAlerts > 0 ? '需要处理' : '全部正常' }}</span>
-          <ChevronRight :size="13" />
-        </router-link>
+      <div class="overview-lower">
+        <SectionCard title="动态">
+          <template #extra><span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span></template>
+          <div class="ov-activity-scroll">
+            <button v-for="event in recentEvents" :key="event.id" type="button" class="ov-event" @click="openEvent(event)">
+              <span class="ov-event-type" :class="event.type">{{ event.type === 'signal' ? '信号' : '消息' }}</span>
+              <strong>{{ event.runner_name || event.instrument }}</strong>
+              <span class="ov-event-text">{{ event.type === 'signal' ? event.symbol + ' ' + event.action + ' ' + event.qty : event.text }}</span>
+              <time>{{ fromNow(event.ts) }}</time>
+            </button>
+          </div>
+        </SectionCard>
+        <SectionCard title="最近告警">
+          <template #extra><router-link to="/alerts" class="link-more">告警中心 <ChevronRight :size="13" /></router-link></template>
+          <div v-if="recentAlerts.length" class="ov-alert-scroll">
+            <router-link v-for="alert in recentAlerts" :key="alert.id" to="/alerts" class="ov-alert">
+              <span class="ov-alert-dot" :class="alert.status" />
+              <div><strong>{{ alert.runner_name }}</strong><span>{{ alert.summary }}</span></div>
+              <em>{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</em>
+            </router-link>
+          </div>
+          <div v-else class="alert-empty"><span class="ok" /><div><strong>暂无告警</strong><span>所有策略心跳与运行状态正常。</span></div></div>
+        </SectionCard>
       </div>
     </template>
   </div>
@@ -291,37 +295,48 @@ onBeforeUnmount(() => {
 .link-more { display: inline-flex; align-items: center; gap: 1px; color: var(--text-3); font-size: 10px; }
 .link-more:hover { color: var(--text-2); }
 
-.overview-ticker { flex: none; height: 110px; display: grid; grid-template-columns: minmax(0, 2.4fr) minmax(230px, 1fr); border: 1px solid var(--border); border-radius: var(--radius-lg); background: linear-gradient(145deg, rgba(22, 30, 47, 0.72), rgba(14, 20, 32, 0.8)); overflow: hidden; }
-.ticker-feed { min-width: 0; padding: 9px 15px 8px; display: flex; flex-direction: column; justify-content: center; }
-.ticker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; color: var(--text-2); font-size: 10px; font-weight: 600; }
-.ticker-live { display: inline-flex; align-items: center; gap: 4px; color: var(--text-3); font-size: 9px; font-weight: 400; }
-.ticker-live i { width: 4px; height: 4px; border-radius: 50%; background: var(--down); }
-.ticker-event { display: grid; grid-template-columns: 34px 96px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; padding: 4px 0; border: 0; border-top: 1px solid rgba(125, 139, 161, 0.1); background: transparent; color: inherit; text-align: left; cursor: pointer; }
-.ticker-event:hover { color: #fff; }
-.ticker-type { padding: 2px 4px; border: 1px solid rgba(56, 189, 248, 0.22); border-radius: 3px; color: #38bdf8; font-size: 8px; text-align: center; }
-.ticker-type.message { border-color: rgba(125, 139, 161, 0.22); color: var(--text-3); }
-.ticker-event strong { color: var(--text); font-size: 9px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ticker-text { color: var(--text-3); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ticker-event time { color: var(--text-3); font: 8px var(--font-mono); white-space: nowrap; }
-.ticker-alert { display: flex; align-items: center; gap: 8px; padding: 0 18px; border-left: 1px solid var(--border); color: var(--text-3); background: rgba(21, 28, 44, 0.35); }
-.ticker-alert:hover { background: rgba(28, 38, 58, 0.55); }
-.ticker-alert-label { font-size: 10px; color: var(--text-2); }
-.ticker-alert strong { color: #fff; font: 600 24px var(--font-mono); line-height: 1; }
-.ticker-alert span:nth-of-type(2) { color: var(--text-3); font-size: 9px; }
-.ticker-alert svg { margin-left: auto; color: var(--text-3); }
-.ticker-alert.active { border-left-color: rgba(240, 68, 56, 0.35); }
-.ticker-alert.active strong, .ticker-alert.active span:nth-of-type(2) { color: var(--danger); }
+.overview-lower { flex: none; height: clamp(150px, 18vh, 230px); display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--gap); min-height: 0; }
+.overview-lower > :deep(.section-card) { height: 100%; min-height: 0; }
+.ov-activity-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.ov-activity-scroll::-webkit-scrollbar { width: 5px; }
+.ov-activity-scroll::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
+.ov-event { display: grid; grid-template-columns: 32px 90px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 24px; padding: 3px 0; border: 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ov-event:last-child { border-bottom: 0; }
+.ov-event:hover { background: rgba(255, 255, 255, 0.018); }
+.ov-event-type { padding: 1px 4px; border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 3px; color: #38bdf8; font-size: 7px; text-align: center; }
+.ov-event-type.message { border-color: rgba(125, 139, 161, 0.2); color: var(--text-3); }
+.ov-event strong { color: var(--text-2); font-size: 8px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-event-text { color: var(--text-3); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-event time { color: var(--text-3); font: 7px var(--font-mono); white-space: nowrap; }
+.ov-alert-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.ov-alert { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 7px; align-items: start; padding: 5px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
+.ov-alert:last-child { border-bottom: 0; }
+.ov-alert-dot { width: 5px; height: 5px; margin-top: 4px; border-radius: 50%; background: #f25c5c; }
+.ov-alert-dot.resolved { background: var(--down); }
+.ov-alert div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ov-alert strong { color: var(--text-2); font-size: 8px; font-weight: 500; }
+.ov-alert span { color: var(--text-3); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-alert em { color: #f47c74; font: 7px var(--font-mono); font-style: normal; white-space: nowrap; }
+.alert-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 8px; text-align: left; }
+.alert-empty .ok { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--down); box-shadow: 0 0 8px rgba(46, 204, 143, 0.5); }
+.alert-empty div { display: flex; flex-direction: column; gap: 2px; }
+.alert-empty strong { color: var(--text-2); font-size: 10px; font-weight: 500; }
+.alert-empty span { color: var(--text-3); font-size: 8px; }
+.live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 9px; }
+.live-hint.live { color: var(--down); }
 
 @media (max-height: 820px) {
   .overview-page { gap: 12px; }
-  .overview-page > .summary-grid { height: 88px; }
-  .ov-kpi { padding: 9px 12px; }
-  .ov-kpi-value { margin-top: 6px; font-size: 22px; }
+  .overview-page > .summary-grid { height: 80px; }
+  .ov-kpi { padding: 8px 12px; }
+  .ov-kpi-value { margin-top: 5px; font-size: 22px; }
   .ov-kpi-foot { font-size: 8px; }
-  .overview-ticker { height: 96px; }
-  .ticker-feed { padding: 7px 13px 6px; }
-  .ticker-event { padding: 3px 0; }
-  .ticker-alert strong { font-size: 21px; }
+  .overview-lower { height: 90px; }
+  .overview-lower :deep(.section-card) { padding: 10px 13px; }
+  .overview-lower :deep(.panel-head) { margin-bottom: 4px; }
+  .ov-event { min-height: 21px; padding: 2px 0; }
+  .ov-alert { padding: 4px 0; }
+  .alert-empty strong { font-size: 10px; }
 }
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -329,10 +344,7 @@ onBeforeUnmount(() => {
   .overview-main { flex: none; min-height: 560px; grid-template-columns: minmax(0, 1fr); }
   .overview-main > :deep(.section-card) { height: auto; }
   .strategy-column { max-height: 560px; }
-  .overview-ticker { height: 110px; }
-}
-@media (max-width: 899px) {
-  .overview-page :deep(.status-controls) { display: none; }
+  .overview-lower { height: 180px; grid-template-columns: 1fr; }
 }
 @media (max-width: 760px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -341,7 +353,7 @@ onBeforeUnmount(() => {
   .chart-tools { align-items: flex-start; flex-direction: column; width: 100%; }
   .chart-select { width: 100%; max-width: none; }
   .range-tabs { align-self: stretch; justify-content: space-between; }
-  .overview-ticker { height: auto; grid-template-columns: 1fr; }
-  .ticker-alert { min-height: 66px; border-left: 0; border-top: 1px solid var(--border); }
+  .overview-lower { height: auto; grid-template-columns: 1fr; }
+  .overview-lower > :deep(.section-card) { min-height: 180px; }
 }
 </style>

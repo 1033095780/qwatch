@@ -28,13 +28,14 @@
   --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "SFMono-Regular", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", monospace;
 
   --radius-card: 12px;
+  --radius-lg: 12px;
   --radius-btn: 8px;
   --radius-tag: 6px;
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.35);
 
   --sidebar-w: 232px;
   --sidebar-w-collapsed: 64px;
-  --topbar-h: 56px;
+  --topbar-h: 48px;
   --page-max: 1680px;
   --gap: 16px;
   --pad-page: 24px;

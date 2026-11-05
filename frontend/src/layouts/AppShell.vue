@@ -44,8 +44,6 @@ let mql: MediaQueryList | null = null;
 const collapsed = computed(() => !isMobile.value && settings.collapsed);
 const activePath = computed(() => route.path);
 const breadcrumbParent = computed(() => route.meta.parent || null);
-const isOverview = computed(() => route.name === 'overview');
-const showTopbar = computed(() => !isOverview.value || isMobile.value);
 
 const streamChip = computed(() => {
   if (realtime.live) return { text: '实时', dot: 'running' as const, title: 'SSE 实时连接正常' };
@@ -167,7 +165,7 @@ onBeforeUnmount(() => {
     <div v-if="isMobile && drawerOpen" class="overlay" @click="drawerOpen = false" />
 
     <div class="main">
-      <header v-if="showTopbar" class="topbar">
+      <header class="topbar">
         <div class="topbar-left">
           <button class="icon-btn" type="button" :aria-label="isMobile ? '打开菜单' : collapsed ? '展开侧栏' : '收起侧栏'" @click="onMenuClick">
             <component :is="isMobile ? Menu : collapsed ? PanelLeftOpen : PanelLeftClose" :size="17" />
