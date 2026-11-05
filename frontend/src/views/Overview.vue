@@ -192,7 +192,7 @@ onBeforeUnmount(() => {
           <div class="ov-kpi-value">{{ summary.running }}</div>
           <div class="ov-kpi-foot">共 {{ summary.total }} 个策略</div>
         </div>
-        <router-link to="/alerts" class="ov-kpi link" :class="{ danger: summary.activeAlerts > 0 }">
+        <router-link to="/activity" class="ov-kpi link" :class="{ danger: summary.activeAlerts > 0 }">
           <div class="ov-kpi-top"><span class="ov-kpi-label">活跃告警</span><Bell :size="15" :class="{ danger: summary.activeAlerts > 0 }" /></div>
           <div class="ov-kpi-value" :class="{ danger: summary.activeAlerts > 0 }">{{ summary.activeAlerts }}</div>
           <div class="ov-kpi-foot">{{ summary.activeAlerts > 0 ? '需要处理' : '全部正常' }}</div>
@@ -238,9 +238,9 @@ onBeforeUnmount(() => {
           </div>
         </SectionCard>
         <SectionCard title="最近告警">
-          <template #extra><router-link to="/alerts" class="link-more">告警中心 <ChevronRight :size="13" /></router-link></template>
+          <template #extra><router-link to="/activity" class="link-more">告警中心 <ChevronRight :size="13" /></router-link></template>
           <div v-if="recentAlerts.length" class="ov-alert-scroll">
-            <router-link v-for="alert in recentAlerts" :key="alert.id" to="/alerts" class="ov-alert">
+            <router-link v-for="alert in recentAlerts" :key="alert.id" to="/activity" class="ov-alert">
               <span class="ov-alert-dot" :class="alert.status" />
               <div><strong>{{ alert.runner_name }}</strong><span>{{ alert.summary }}</span></div>
               <em>{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</em>

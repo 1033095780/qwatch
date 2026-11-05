@@ -37,9 +37,10 @@ const router = createRouter({
           path: 'strategies/:id', name: 'strategy-detail', component: () => import('@/views/StrategyDetail.vue'),
           meta: { title: '策略详情', parent: { title: '策略', to: '/strategies' } },
         },
-        { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警' } },
+        { path: 'activity', name: 'activity', component: () => import('@/views/Activity.vue'), meta: { title: '动态' } },
         { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
         // 已下线页面：保留重定向，避免旧书签 404
+        { path: 'alerts', redirect: '/activity' },
         { path: 'accounts', redirect: '/strategies' },
         { path: 'signals', redirect: '/overview' },
         { path: 'trades', redirect: '/overview' },

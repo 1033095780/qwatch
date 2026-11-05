@@ -92,6 +92,18 @@ export interface RunnerEvent {
   amount?: number | string | null;
 }
 
+export interface ActivityEvent extends RunnerEvent {
+  runner_id?: string;
+  runner_name?: string;
+  account_name?: string;
+}
+
+export interface EventFeedResponse {
+  items: ActivityEvent[];
+  has_more: boolean;
+  next_before_id: number | null;
+}
+
 export interface Alert {
   id: string;
   rule: AlertRule | string;

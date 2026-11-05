@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
       <div v-if="firingAlerts.length" class="alert-banner">
         <AlertTriangle :size="15" />
         <span>{{ firingAlerts.length }} 条 P0 告警：{{ firingAlerts[0].summary }}</span>
-        <router-link to="/alerts" class="banner-link">去处理</router-link>
+        <router-link to="/activity" class="banner-link">去处理</router-link>
       </div>
 
       <section class="hero-break">
@@ -230,9 +230,9 @@ onBeforeUnmount(() => {
           <section v-if="alerts.length" class="card block-card">
             <div class="block-head">
               <div><h3>最近告警</h3><span class="block-sub">{{ alerts.length }} 条</span></div>
-              <router-link to="/alerts" class="inline-link">告警中心</router-link>
+              <router-link to="/activity" class="inline-link">告警中心</router-link>
             </div>
-            <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/alerts" class="alert-line">
+            <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/activity" class="alert-line">
               <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
               <span class="alert-text">{{ alert.summary }}</span>
               <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>

@@ -1147,6 +1147,61 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
         }
 
 
+@app.get("/api/v1/events")
+def list_events(
+    limit: int = Query(default=50, ge=1, le=100),
+    before_id: int | None = Query(default=None, ge=1),
+    type: str | None = Query(default=None),
+    runner_id: str | None = Query(default=None),
+    account_id: str | None = Query(default=None),
+    q: str | None = Query(default=None),
+    days: int = Query(default=0, ge=0, le=365),
+    user: str = Depends(require_user),
+) -> dict[str, Any]:
+    """全局动态流：消息/信号，按 id 倒序游标分页。"""
+    where = ["1 = 1"]
+    params: list[Any] = []
+    if before_id is not None:
+        where.append("e.id < ?")
+        params.append(before_id)
+    if type in ("message", "signal"):
+        where.append("e.type = ?")
+        params.append(type)
+    if runner_id:
+        where.append("e.runner_id = ?")
+        params.append(runner_id)
+    if account_id:
+        where.append("r.account_id = ?")
+        params.append(account_id)
+    if days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        where.append("e.ts >= ?")
+        params.append(cutoff)
+    if q and q.strip():
+        like = "%" + q.strip().lower() + "%"
+        where.append("(lower(r.name) LIKE ? OR lower(a.name) LIKE ? OR lower(e.text) LIKE ? OR lower(e.symbol) LIKE ? OR lower(e.instrument) LIKE ?)")
+        params.extend([like, like, like, like, like])
+    sql = (
+        "SELECT e.*, r.name AS runner_name, a.name AS account_name "
+        "FROM events e JOIN runners r ON r.id = e.runner_id LEFT JOIN accounts a ON a.id = r.account_id "
+        "WHERE " + " AND ".join(where) + " ORDER BY e.id DESC LIMIT ?"
+    )
+    with connect() as conn:
+        rows = conn.execute(sql, [*params, limit + 1]).fetchall()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        items = []
+        for row in rows:
+            item = event_view(row)
+            item["account_name"] = row["account_name"] if "account_name" in row.keys() else None
+            items.append(item)
+        return {
+            "items": items,
+            "has_more": has_more,
+            "next_before_id": rows[-1]["id"] if rows else None,
+        }
+
+
 @app.get("/api/v1/alerts")
 def alerts_list(status: str = Query(default="active"), user: str = Depends(require_user)) -> dict[str, Any]:
     if status not in ("active", "history"):

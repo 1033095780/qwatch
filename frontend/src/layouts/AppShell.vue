@@ -5,7 +5,7 @@ import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NDropdown, useMessage } from 'naive-ui';
 import {
-  Activity, Bell, LayoutDashboard, Menu, PanelLeftClose, PanelLeftOpen,
+  Activity, LayoutDashboard, Menu, MessageSquare, PanelLeftClose, PanelLeftOpen,
   RefreshCw, Settings as SettingsIcon,
 } from 'lucide-vue-next';
 import { api, apiMeta } from '@/api/client';
@@ -23,7 +23,7 @@ interface NavItem { to: string; label: string; icon: Component; badge?: boolean 
 const navItems: NavItem[] = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
   { to: '/strategies', label: '策略', icon: Activity },
-  { to: '/alerts', label: '告警', icon: Bell, badge: true },
+  { to: '/activity', label: '动态', icon: MessageSquare, badge: true },
   { to: '/settings', label: '设置', icon: SettingsIcon },
 ];
 
@@ -145,7 +145,7 @@ onBeforeUnmount(() => {
           :key="item.to"
           :to="item.to"
           class="nav-item"
-          :class="{ active: isActive(item.to), 'has-alert': item.to === '/alerts' && alertCount > 0 }"
+          :class="{ active: isActive(item.to), 'has-alert': item.to === '/activity' && alertCount > 0 }"
           :title="collapsed ? item.label : undefined"
         >
           <component :is="item.icon" :size="18" :stroke-width="1.7" class="nav-icon" />

@@ -31,6 +31,7 @@
 - 今日盈利额：总览、账户头、策略卡展示今日权益变动金额
 - 
 - 详情：无 Tab；左进程/告警，右动态（搜索 + 全部/消息/信号筛选 + 滚动）
+- 动态中心：左侧全局事件流（消息/信号，分页滚动），右侧活跃/历史告警，可直接确认告警
 - SSE 实时告警/动态；钉钉 P0 投递/重试/恢复
 - 生产安全 SDK
 
@@ -90,9 +91,9 @@ SDK v0.6 生产安全：
 |---|---|
 | ![策略](screenshots/strategies.png) | ![详情](screenshots/strategy-detail.png) |
 
-| 总览 | 告警 |
+| 总览 | 动态中心 |
 |---|---|
-| ![总览](screenshots/overview.png) | ![告警](screenshots/alerts.png) |
+| ![总览](screenshots/overview.png) | ![动态中心](screenshots/activity.png) |
 
 ## 每日盈利额（第一阶段）
 

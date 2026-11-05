@@ -64,7 +64,7 @@ onBeforeUnmount(() => {
     <button class="ctl" type="button" aria-label="刷新" title="刷新全部数据" @click="refresh">
       <RefreshCw :size="15" :class="{ spinning: apiMeta.pending > 0 }" />
     </button>
-    <button class="ctl bell" :class="{ 'has-alerts': alertCount > 0 }" type="button" aria-label="告警中心" title="告警中心" @click="router.push('/alerts')">
+    <button class="ctl bell" :class="{ 'has-alerts': alertCount > 0 }" type="button" aria-label="动态与告警" title="动态与告警" @click="router.push('/activity')">
       <Bell :size="16" />
       <span v-if="alertCount" class="dot">{{ alertCount > 9 ? '9+' : alertCount }}</span>
     </button>
