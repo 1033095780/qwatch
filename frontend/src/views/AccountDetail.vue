@@ -33,6 +33,10 @@ const ranges = [
   { key: 'ALL', label: '全部', days: 0 },
 ] as const;
 
+const todayPnl = computed(() => {
+  const n = Number(account.value?.today_pnl);
+  return account.value?.today_pnl !== null && account.value?.today_pnl !== undefined && Number.isFinite(n) ? n : null;
+});
 const chartData = computed(() => {
   if (!curve.value.length) return [];
   const cfg = ranges.find((item) => item.key === range.value);
@@ -42,11 +46,6 @@ const chartData = computed(() => {
   const filtered = curve.value.filter((point) => Date.parse(point.ts) >= cutoff);
   return filtered.length > 1 ? filtered : curve.value.slice(-2);
 });
-const navSourceLabel = computed(() => {
-  if (!account.value?.nav) return '';
-  return account.value.nav_source === 'account' ? '账户上报' : '策略汇总';
-});
-
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
@@ -99,8 +98,7 @@ onBeforeUnmount(() => {
           <span class="equity-label">账户权益</span>
           <strong class="equity-value mono">{{ account.equity ? '¥' + fmtNumber(account.equity, 0) : '—' }}</strong>
           <div class="hero-meta">
-            <span>账户净值 <strong class="mono">{{ account.nav ? fmtNumber(account.nav, 4) : '—' }}</strong></span>
-            <span v-if="navSourceLabel" class="source">{{ navSourceLabel }}</span>
+            <span>今日盈利额 <strong class="mono" :class="todayPnl === null ? '' : todayPnl >= 0 ? 'up' : 'down'">{{ todayPnl === null ? '—' : (todayPnl >= 0 ? '+' : '') + fmtNumber(todayPnl, 0) }}</strong></span>
             <span>{{ account.strategy_count }} 个策略 · {{ account.online_strategies }} 在线</span>
           </div>
         </div>
@@ -136,6 +134,8 @@ onBeforeUnmount(() => {
 .equity-value { display: block; margin-top: 2px; font-size: 34px; line-height: 1.1; letter-spacing: -0.04em; color: #ffffff; }
 .hero-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; color: var(--text-3); font-size: 10px; }
 .hero-meta strong { color: var(--text); }
+.hero-meta strong.up { color: var(--up); }
+.hero-meta strong.down { color: var(--down); }
 .source { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-2); }
 .range-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .range-tabs button { height: 24px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }

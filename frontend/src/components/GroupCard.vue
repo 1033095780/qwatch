@@ -16,6 +16,10 @@ const router = useRouter();
 const accountName = computed(() => props.runner.account_name || '未关联账户');
 const broker = computed(() => props.runner.account_broker || '');
 const equity = computed(() => props.runner.equity ?? null);
+const todayPnl = computed(() => {
+  const n = Number(props.runner.today_pnl);
+  return props.runner.today_pnl !== null && props.runner.today_pnl !== undefined && Number.isFinite(n) ? n : null;
+});
 const issueCount = computed(() => Math.max(0, (props.runner.process_count || 0) - (props.runner.online_processes || 0)));
 
 function goDetail(): void {
@@ -24,7 +28,7 @@ function goDetail(): void {
 </script>
 
 <template>
-  <article class="group-card" role="link" tabindex="0" @click="goDetail" @keydown.enter="goDetail">
+  <article class="group-card" :class="{ 'is-issue': issueCount > 0 || runner.status === 'offline' || runner.status === 'degraded' }" role="link" tabindex="0" @click="goDetail" @keydown.enter="goDetail">
     <header class="card-head">
       <div class="identity">
         <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
@@ -41,6 +45,7 @@ function goDetail(): void {
       <div class="equity-copy">
         <span class="equity-label">策略权益</span>
         <strong class="equity-value mono">{{ equity !== null ? '¥' + fmtNumber(equity, 0) : '—' }}</strong>
+        <span v-if="todayPnl !== null" class="today-pnl" :class="todayPnl >= 0 ? 'up' : 'down'">今日 {{ todayPnl >= 0 ? '+' : '' }}{{ fmtNumber(todayPnl, 0) }}</span>
       </div>
       <div class="spark-wrap">
         <NavSparkline v-if="runner.equity_sparkline && runner.equity_sparkline.length" :values="runner.equity_sparkline" :width="160" :height="38" />
@@ -70,6 +75,12 @@ function goDetail(): void {
   color: inherit;
 }
 .group-card:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.group-card.is-issue { border-color: rgba(240, 68, 56, 0.38); animation: issue-glow 2.4s ease-in-out infinite; }
+@keyframes issue-glow {
+  0%, 100% { box-shadow: 0 0 0 1px rgba(240, 68, 56, 0.06); }
+  50% { box-shadow: 0 0 0 2px rgba(240, 68, 56, 0.2); }
+}
+@media (prefers-reduced-motion: reduce) { .group-card.is-issue { animation: none; } }
 .group-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .head-right { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
@@ -82,6 +93,9 @@ function goDetail(): void {
 .spark-wrap { flex: 1 1 auto; max-width: 44%; min-width: 60px; opacity: 0.9; }
 .equity-label { font-size: 10px; color: var(--text-3); }
 .equity-value { font-size: 23px; line-height: 1.15; letter-spacing: -0.03em; color: #ffffff; white-space: nowrap; }
+.today-pnl { font-size: 10px; color: var(--text-3); }
+.today-pnl.up { color: var(--up); }
+.today-pnl.down { color: var(--down); }
 .card-foot { margin-top: 10px; }
 .process-line { display: flex; align-items: baseline; gap: 5px; margin-bottom: 7px; font-size: 10px; color: var(--text-3); }
 .proc-meta { color: var(--text-2); font-size: 10px; }

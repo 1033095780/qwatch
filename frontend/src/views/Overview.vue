@@ -85,6 +85,11 @@ const recentEvents = computed<RunnerEvent[]>(() => {
   return [...live, ...initial.filter((event) => !ids.has(String(event.id)))].slice(0, 20);
 });
 const recentAlerts = computed(() => (data.value?.recent_alerts || []).slice(0, 4));
+const statusOrder: Record<string, number> = { offline: 0, degraded: 1, paused: 2, running: 3 };
+const sortedRunners = computed(() => [...(data.value?.runners || [])].sort((a, b) => {
+  const order = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+  return order || a.name.localeCompare(b.name, 'zh-CN');
+}));
 
 async function loadAccountCurve(id: string): Promise<void> {
   if (!id || id === 'all') { accountCurve.value = []; return; }
@@ -180,11 +185,11 @@ onBeforeUnmount(() => {
           <div class="ov-kpi-foot">{{ summary.accountCount }} 个账户 · {{ summary.total }} 个策略</div>
         </div>
         <div class="ov-kpi">
-          <div class="ov-kpi-top"><span class="ov-kpi-label">今日权益变动</span><TrendingUp :size="15" /></div>
+          <div class="ov-kpi-top"><span class="ov-kpi-label">今日盈利额</span><TrendingUp :size="15" /></div>
           <div class="ov-kpi-value" :class="equityChange === null ? '' : equityChange >= 0 ? 'up' : 'down'">
             {{ equityChange === null ? '—' : (equityChange >= 0 ? '+' : '') + fmtNumber(equityChange, 0) }}
           </div>
-          <div class="ov-kpi-foot">较今日基线</div>
+          <div class="ov-kpi-foot">按今日基线计算</div>
         </div>
         <div class="ov-kpi">
           <div class="ov-kpi-top"><span class="ov-kpi-label">策略在线</span><Activity :size="15" /></div>
@@ -211,14 +216,14 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <div class="chart-wrap" :class="{ dimmed: curveLoading }">
-            <NavChart :data="equityCurve" :height="348" />
+            <NavChart :data="equityCurve" :height="500" />
           </div>
         </SectionCard>
 
         <SectionCard title="策略状态">
           <template #extra><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
-          <div v-if="data.runners.length" class="strategy-column">
-            <GroupCard v-for="runner in data.runners" :key="runner.id" :runner="runner" />
+          <div v-if="sortedRunners.length" class="strategy-column">
+            <GroupCard v-for="runner in sortedRunners" :key="runner.id" :runner="runner" />
           </div>
           <EmptyState v-else compact title="还没有策略" description="前往「策略」页新建策略并生成接入令牌。" />
         </SectionCard>
@@ -259,7 +264,8 @@ onBeforeUnmount(() => {
 .ov-kpi-value.danger, .danger { color: var(--danger); }
 .ov-kpi-foot { margin-top: auto; padding-top: 6px; color: #cbd5e5; font-size: 10px; }
 .ov-kpi.link:hover { border-color: var(--border-strong); }
-.overview-main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: start; }
+.overview-main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: stretch; }
+.overview-main > :deep(.section-card) { height: 100%; }
 .chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chart-select { height: 27px; min-width: 150px; max-width: 220px; padding: 0 24px 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 11px; outline: none; cursor: pointer; }
 .range-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
@@ -267,7 +273,7 @@ onBeforeUnmount(() => {
 .range-tabs button.active { background: var(--primary-soft); color: var(--text); }
 .chart-wrap { transition: opacity 160ms ease; }
 .chart-wrap.dimmed { opacity: 0.55; }
-.strategy-column { display: flex; flex-direction: column; gap: 10px; max-height: 428px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.strategy-column { display: flex; flex: 1; flex-direction: column; gap: 10px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .strategy-column::-webkit-scrollbar { width: 5px; }
 .strategy-column::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
 .strategy-column::-webkit-scrollbar-track { background: transparent; }
@@ -290,6 +296,7 @@ onBeforeUnmount(() => {
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .overview-main { grid-template-columns: minmax(0, 1fr); }
+  .overview-main > :deep(.section-card) { height: auto; }
   .strategy-column { max-height: 520px; }
 }
 @media (max-width: 760px) {

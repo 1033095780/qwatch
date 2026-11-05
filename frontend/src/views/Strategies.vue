@@ -32,6 +32,7 @@ const statusFilter = ref<RunnerStatus | 'all'>('all');
 const statusOptions = [{ label: '全部状态', value: 'all' }, ...Object.entries(RUNNER_STATUS_LABELS).map(([value, label]) => ({ value, label }))];
 const hasFilter = computed(() => !!keyword.value || statusFilter.value !== 'all');
 
+const statusOrder: Record<string, number> = { offline: 0, degraded: 1, paused: 2, running: 3 };
 const matchedRunners = computed(() => {
   const q = keyword.value.trim().toLowerCase();
   return runners.value.filter((runner) => {
@@ -45,7 +46,7 @@ interface AccountGroup { account: Account; runners: Runner[]; online: number }
 
 const groups = computed<AccountGroup[]>(() => {
   const byAccount = new Map<string, Runner[]>();
-  matchedRunners.value.forEach((runner) => {
+  [...matchedRunners.value].sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9)).forEach((runner) => {
     const list = byAccount.get(runner.account_id) || [];
     list.push(runner);
     byAccount.set(runner.account_id, list);
@@ -69,7 +70,6 @@ const groups = computed<AccountGroup[]>(() => {
         name: first.account_name || '未关联账户',
         broker: first.account_broker || '',
         equity: null,
-        nav: null,
         strategy_count: list.length,
         online_strategies: list.filter((runner) => runner.status === 'running').length,
       },
@@ -184,13 +184,12 @@ onBeforeUnmount(() => {
               <strong class="metric-value mono">{{ group.account.equity !== null && group.account.equity !== undefined && group.account.equity !== '' ? '¥' + fmtNumber(group.account.equity, 0) : '—' }}</strong>
             </div>
             <div class="metric">
-              <span class="metric-label">账户净值</span>
-              <strong class="metric-value mono">{{ group.account.nav !== null && group.account.nav !== undefined && group.account.nav !== '' ? fmtNumber(group.account.nav, 4) : '—' }}</strong>
+              <span class="metric-label">今日盈利额</span>
+              <strong class="metric-value mono" :class="Number(group.account.today_pnl) >= 0 ? 'up' : 'down'">{{ group.account.today_pnl !== null && group.account.today_pnl !== undefined ? (Number(group.account.today_pnl) >= 0 ? '+' : '') + fmtNumber(group.account.today_pnl, 0) : '—' }}</strong>
             </div>
             <div class="account-spark">
               <NavSparkline v-if="group.account.equity_sparkline && group.account.equity_sparkline.length" :values="group.account.equity_sparkline" :width="260" :height="52" />
             </div>
-            <span class="account-open">查看账户 →</span>
           </div>
         </router-link>
 
@@ -242,8 +241,9 @@ onBeforeUnmount(() => {
 .metric { display: flex; flex-direction: column; gap: 3px; }
 .metric-label { font-size: 10px; color: var(--text-3); }
 .metric-value { font-size: 21px; letter-spacing: -0.02em; color: #ffffff; white-space: nowrap; }
+.metric-value.up { color: var(--up); }
+.metric-value.down { color: var(--down); }
 .account-spark { width: 290px; max-width: 100%; opacity: 0.95; }
-.account-open { color: var(--primary); font-size: 11px; white-space: nowrap; }
 .account-count { font-size: 10px; color: var(--text-3); white-space: nowrap; margin-left: 4px; }
 .account-count .mono { color: var(--text); font-size: 12px; }
 .group-empty { padding: 14px 16px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-3); font-size: 11px; }
@@ -253,6 +253,5 @@ onBeforeUnmount(() => {
   .account-header { align-items: flex-start; }
   .account-metrics { width: 100%; gap: 16px; }
   .account-spark { width: 100%; order: 4; }
-  .account-open { display: none; }
 }
 </style>

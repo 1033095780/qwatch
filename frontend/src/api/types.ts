@@ -32,12 +32,8 @@ export interface Account {
   broker: string;
   description?: string;
   equity?: string | null;
-  nav?: string | null;
-  nav_source?: 'account' | 'strategies' | null;
-  computed_nav?: string | null;
-  nav_override_at?: string | null;
+  today_pnl?: string | null;
   equity_updated_at?: string | null;
-  nav_updated_at?: string | null;
   created_at?: string | null;
   strategy_count?: number;
   online_strategies?: number;
@@ -66,9 +62,8 @@ export interface Runner {
   account_broker: string;
   /** 策略级权益/净值（由该策略进程上报，last-wins） */
   equity?: string | null;
-  nav?: string | null;
+  today_pnl?: string | null;
   equity_updated_at?: string | null;
-  nav_updated_at?: string | null;
   equity_sparkline?: number[];
   created_at?: string | null;
 }
@@ -130,6 +125,7 @@ export interface Overview {
   account_count?: number;
   total_equity?: string | null;
   today_equity_change?: string | null;
+  today_pnl?: string | null;
   equity_curve?: CurvePoint[];
   accounts: Account[];
   runners: Runner[];

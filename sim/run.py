@@ -1,6 +1,6 @@
-"""qwatch v0.5 三策略模拟器：2 个账户（国金证券 / 徽商期货）+ 3 个策略 + 4 个稳定进程。
+"""qwatch v0.6 三策略模拟器：2 个账户（国金证券 / 徽商期货）+ 3 个策略 + 4 个稳定进程。
 
-先启动 v0.5 后端：
+先启动 v0.6 后端：
     python -m backend
 再运行模拟器（Ctrl+C 退出）：
     python -m sim.run
@@ -11,7 +11,7 @@
     QWATCH_SIM_LOG_DIR   SDK 日志目录，默认仓库根 logs/（自测时可指向临时目录）
 
 每个策略一个 token，缓存复用 data/sim_tokens.json；进程名固定（rb / IF / ag / au），
-白银波段是双进程策略。v0.5 口径：每个策略由主进程上报自己的策略权益/净值（last-wins），
+白银波段是双进程策略。v0.6 口径：每个策略由主进程上报自己的策略权益/净值（last-wins），
 账户权益/净值由后端对策略求和/加权；进程只发心跳 / tick / msg / signal / equity / nav，无 PnL。
 """
 
@@ -278,11 +278,11 @@ class StrategyLedger:
         with self._lock:
             return round(self._value, 2)
 
-    def step(self) -> tuple[float, float]:
-        """推进一次策略权益，返回 (equity, nav)。"""
+    def step(self) -> float:
+        """推进一次策略权益，返回 equity。"""
         with self._lock:
             self._value = max(1.0, self._value * (1 + self._rng.gauss(0.0002, 0.0008)))
-            return round(self._value, 2), round(self._value / self.base_equity, 6)
+            return round(self._value, 2)
 
 
 def _emit_signal(
@@ -326,7 +326,7 @@ def _run_process(
     strategy: dict[str, Any], process: dict[str, Any], url: str, token: str,
     ledger: StrategyLedger | None, stop: threading.Event,
 ) -> None:
-    """一个进程一个 Qwatch：tick/msg/signal/equity/nav 全部非阻塞入队，后台 worker 负责发送。"""
+    """一个进程一个 Qwatch：tick/msg/signal/equity 全部非阻塞入队，后台 worker 负责发送。"""
     label = strategy["name"] + "/" + process["instrument"]
     rnd = random.Random(f"{label}-{time.time_ns()}")
     q = Qwatch(
@@ -353,11 +353,10 @@ def _run_process(
                 print(f"[{label}] 动态 {text}")
                 next_msg = now + rnd.uniform(30, 60)
             if ledger is not None and now >= next_equity:
-                value, nav = ledger.step()
+                value = ledger.step()
                 q.equity(value)
-                q.nav(nav)
                 equity_count += 1
-                print(f"[{label}] 策略权益 {strategy['name']} {value:,.2f} nav={nav:.6f}")
+                print(f"[{label}] 策略权益 {strategy['name']} {value:,.2f}")
                 next_equity = now + rnd.uniform(20, 40)
             stop.wait(TICK_S)
     finally:
@@ -372,7 +371,7 @@ def _run_process(
 # ---------- 入口 ----------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="qwatch v0.5 双账户三策略模拟器（策略级权益）")
+    parser = argparse.ArgumentParser(description="qwatch v0.6 双账户三策略模拟器（策略级权益）")
     parser.add_argument("--duration", type=float, default=0.0, help="运行秒数，0 表示一直运行到 Ctrl+C（便于自测）")
     args = parser.parse_args()
 
