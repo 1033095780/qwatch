@@ -8,7 +8,6 @@ import { useSettingsStore } from '@/stores/settings';
 import { fmtDateTime } from '@/utils/format';
 import ChannelEditModal from '@/components/ChannelEditModal.vue';
 import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
 
 const store = useSettingsStore();
 const message = useMessage();
@@ -69,8 +68,6 @@ onMounted(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="设置" />
-
     <div v-if="loading" class="page">
       <div class="skel" style="height: 48px; border-radius: 10px" />
       <div class="skel" style="height: 320px; border-radius: 12px" />

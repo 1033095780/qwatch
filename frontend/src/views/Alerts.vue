@@ -9,8 +9,6 @@ import { useSettingsStore } from '@/stores/settings';
 import { ruleLabel } from '@/utils/catalog';
 import { fmtDateTime, fromNow } from '@/utils/format';
 import EmptyState from '@/components/EmptyState.vue';
-import PageHeader from '@/components/PageHeader.vue';
-import StatusDot from '@/components/StatusDot.vue';
 import TabBar from '@/components/TabBar.vue';
 import type { TabItem } from '@/components/TabBar.vue';
 
@@ -108,15 +106,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="告警">
-      <template #extra>
-        <span class="live-hint" :class="{ live: realtime.live }">
-          <StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />
-          {{ realtime.live ? '实时' : '轮询' }}
-        </span>
-      </template>
-    </PageHeader>
-
     <div v-if="error" class="error-bar">
       <span class="dot" />{{ error }}
       <n-button text size="tiny" @click="load(true)">重试</n-button>

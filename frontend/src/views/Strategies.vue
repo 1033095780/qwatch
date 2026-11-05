@@ -12,7 +12,6 @@ import { useSettingsStore } from '@/stores/settings';
 import EmptyState from '@/components/EmptyState.vue';
 import GroupCard from '@/components/GroupCard.vue';
 import NavSparkline from '@/components/NavSparkline.vue';
-import PageHeader from '@/components/PageHeader.vue';
 import StrategyCreateModal from '@/components/StrategyCreateModal.vue';
 import StrategyGrid from '@/components/StrategyGrid.vue';
 
@@ -128,15 +127,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page">
-    <PageHeader title="策略">
-      <template #extra>
-        <n-button type="primary" size="small" @click="createOpen = true">
-          <template #icon><Plus :size="14" /></template>
-          新建策略
-        </n-button>
-      </template>
-    </PageHeader>
-
     <section class="card toolbar">
       <div class="toolbar-left">
         <n-input v-model:value="keyword" clearable placeholder="搜索策略名 / 标识 / 账户" class="search" size="small">
@@ -147,6 +137,10 @@ onBeforeUnmount(() => {
       <div class="toolbar-right">
         <span class="result mono">{{ matchedRunners.length }} / {{ runners.length }}</span>
         <button v-if="hasFilter" type="button" class="reset" @click="resetFilters">重置筛选</button>
+        <n-button type="primary" size="small" @click="createOpen = true">
+          <template #icon><Plus :size="14" /></template>
+          新建策略
+        </n-button>
       </div>
     </section>
 

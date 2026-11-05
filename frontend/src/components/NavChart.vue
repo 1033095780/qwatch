@@ -147,7 +147,7 @@ onBeforeUnmount(() => { resizeObserver?.disconnect(); });
   bottom: -2px;
   display: flex;
   justify-content: space-between;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-3);
   pointer-events: none;
 }
@@ -167,7 +167,7 @@ onBeforeUnmount(() => { resizeObserver?.disconnect(); });
   white-space: nowrap;
 }
 .tip-time {
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-3);
 }
 .tip-value {

@@ -84,7 +84,7 @@ function goDetail(): void {
 .group-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .head-right { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
-.account-chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-3); font-size: 9px; }
+.account-chip { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; color: var(--text-3); font-size: 10px; }
 .identity { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .name { font-size: 14px; font-weight: 600; color: #ffffff; }
 .issue { display: inline-flex; align-items: center; gap: 3px; color: #f5b64b; font-size: 10px; white-space: nowrap; }

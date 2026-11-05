@@ -122,7 +122,7 @@ const emit = defineEmits<{ select: [event: RunnerEvent] }>();
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-3);
 }
 .type-label {

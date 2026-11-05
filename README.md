@@ -154,3 +154,7 @@ python -m compileall -q backend sdk sim
 ## License
 
 Apache-2.0
+
+## 设计规范
+
+- [字体与排版规范](docs/UI-TYPOGRAPHY.md)

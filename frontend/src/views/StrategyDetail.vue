@@ -290,9 +290,9 @@ onBeforeUnmount(() => {
 .inline-link { color: var(--text-3); font-size: 10px; }
 .alert-line { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border); color: inherit; }
 .alert-line:last-child { border-bottom: 0; }
-.rule-chip { flex: 0 0 auto; padding: 2px 5px; border: 1px solid rgba(240, 68, 56, 0.25); border-radius: 4px; color: #f47c74; font-size: 9px; }
+.rule-chip { flex: 0 0 auto; padding: 2px 5px; border: 1px solid rgba(240, 68, 56, 0.25); border-radius: 4px; color: #f47c74; font-size: 10px; }
 .alert-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 10px; }
-.alert-status { font-size: 9px; color: var(--text-3); white-space: nowrap; }
+.alert-status { font-size: 10px; color: var(--text-3); white-space: nowrap; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
 .activity-card { display: flex; flex-direction: column; min-height: 430px; padding: 16px 18px; }

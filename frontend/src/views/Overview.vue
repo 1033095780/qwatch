@@ -13,7 +13,6 @@ import EmptyState from '@/components/EmptyState.vue';
 import GroupCard from '@/components/GroupCard.vue';
 import NavChart from '@/components/NavChart.vue';
 import NavSparkline from '@/components/NavSparkline.vue';
-import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import StatusDot from '@/components/StatusDot.vue';
 
@@ -157,8 +156,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="page overview-page">
-    <PageHeader title="总览" />
-
     <div v-if="loading && !data" class="skeleton-page">
       <div class="summary-grid">
         <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 104px" />
@@ -220,7 +217,7 @@ onBeforeUnmount(() => {
         </SectionCard>
 
         <SectionCard title="策略状态">
-          <template #extra><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
+          <template #extra><span class="status-count">{{ sortedRunners.length }} 个策略</span><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
           <div v-if="sortedRunners.length" class="strategy-column">
             <GroupCard v-for="runner in sortedRunners" :key="runner.id" :runner="runner" />
           </div>
@@ -268,7 +265,7 @@ onBeforeUnmount(() => {
 .ov-kpi-value.up { color: var(--up); }
 .ov-kpi-value.down { color: var(--down); }
 .ov-kpi-value.danger, .danger { color: var(--danger); }
-.ov-kpi-foot { margin-top: auto; padding-top: 5px; color: #cbd5e5; font-size: 9px; }
+.ov-kpi-foot { margin-top: auto; padding-top: 5px; color: #cbd5e5; font-size: 10px; }
 .ov-kpi.link:hover { border-color: var(--border-strong); }
 .up { color: var(--up) !important; }
 .down { color: var(--down) !important; }
@@ -292,37 +289,38 @@ onBeforeUnmount(() => {
 .strategy-column::-webkit-scrollbar { width: 5px; }
 .strategy-column::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
 .strategy-column::-webkit-scrollbar-track { background: transparent; }
+.status-count { margin-right: 4px; color: var(--text-3); font-size: 10px; }
 .link-more { display: inline-flex; align-items: center; gap: 1px; color: var(--text-3); font-size: 10px; }
 .link-more:hover { color: var(--text-2); }
 
-.overview-lower { flex: none; height: clamp(150px, 18vh, 230px); display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--gap); min-height: 0; }
+.overview-lower { flex: none; height: clamp(120px, 18vh, 230px); display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--gap); min-height: 0; }
 .overview-lower > :deep(.section-card) { height: 100%; min-height: 0; }
 .ov-activity-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .ov-activity-scroll::-webkit-scrollbar { width: 5px; }
 .ov-activity-scroll::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
-.ov-event { display: grid; grid-template-columns: 32px 90px minmax(0, 1fr) auto; align-items: center; gap: 7px; width: 100%; min-height: 24px; padding: 3px 0; border: 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.ov-event { display: grid; grid-template-columns: 40px 96px minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; height: 28px; padding: 3px 0; overflow: hidden; border: 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .ov-event:last-child { border-bottom: 0; }
 .ov-event:hover { background: rgba(255, 255, 255, 0.018); }
-.ov-event-type { padding: 1px 4px; border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 3px; color: #38bdf8; font-size: 7px; text-align: center; }
+.ov-event-type { padding: 2px 5px; border: 1px solid rgba(56, 189, 248, 0.2); border-radius: 4px; color: #38bdf8; font-size: 10px; text-align: center; }
 .ov-event-type.message { border-color: rgba(125, 139, 161, 0.2); color: var(--text-3); }
-.ov-event strong { color: var(--text-2); font-size: 8px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ov-event-text { color: var(--text-3); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ov-event time { color: var(--text-3); font: 7px var(--font-mono); white-space: nowrap; }
+.ov-event strong { color: var(--text-2); font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-event-text { color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-event time { color: var(--text-3); font: 10px var(--font-mono); white-space: nowrap; }
 .ov-alert-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
-.ov-alert { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 7px; align-items: start; padding: 5px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
+.ov-alert { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
 .ov-alert:last-child { border-bottom: 0; }
 .ov-alert-dot { width: 5px; height: 5px; margin-top: 4px; border-radius: 50%; background: #f25c5c; }
 .ov-alert-dot.resolved { background: var(--down); }
 .ov-alert div { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.ov-alert strong { color: var(--text-2); font-size: 8px; font-weight: 500; }
-.ov-alert span { color: var(--text-3); font-size: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ov-alert em { color: #f47c74; font: 7px var(--font-mono); font-style: normal; white-space: nowrap; }
+.ov-alert strong { color: var(--text-2); font-size: 11px; font-weight: 500; }
+.ov-alert span { color: var(--text-3); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-alert em { color: #f47c74; font: 10px var(--font-mono); font-style: normal; white-space: nowrap; }
 .alert-empty { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 8px; text-align: left; }
 .alert-empty .ok { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--down); box-shadow: 0 0 8px rgba(46, 204, 143, 0.5); }
 .alert-empty div { display: flex; flex-direction: column; gap: 2px; }
-.alert-empty strong { color: var(--text-2); font-size: 10px; font-weight: 500; }
-.alert-empty span { color: var(--text-3); font-size: 8px; }
-.live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 9px; }
+.alert-empty strong { color: var(--text-2); font-size: 12px; font-weight: 500; }
+.alert-empty span { color: var(--text-3); font-size: 10px; }
+.live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
 
 @media (max-height: 820px) {
@@ -330,13 +328,13 @@ onBeforeUnmount(() => {
   .overview-page > .summary-grid { height: 80px; }
   .ov-kpi { padding: 8px 12px; }
   .ov-kpi-value { margin-top: 5px; font-size: 22px; }
-  .ov-kpi-foot { font-size: 8px; }
-  .overview-lower { height: 90px; }
+  .ov-kpi-foot { font-size: 10px; }
+  .overview-lower { height: 110px; }
   .overview-lower :deep(.section-card) { padding: 10px 13px; }
   .overview-lower :deep(.panel-head) { margin-bottom: 4px; }
-  .ov-event { min-height: 21px; padding: 2px 0; }
-  .ov-alert { padding: 4px 0; }
-  .alert-empty strong { font-size: 10px; }
+  .ov-event { height: 26px; padding: 2px 0; }
+  .ov-alert { padding: 5px 0; }
+  .alert-empty strong { font-size: 11px; }
 }
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

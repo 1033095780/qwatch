@@ -403,8 +403,8 @@ onBeforeUnmount(() => {
 .crumbs {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
+  gap: 7px;
+  font-size: 16px;
   min-width: 0;
 }
 .crumb {
@@ -419,7 +419,7 @@ onBeforeUnmount(() => {
 }
 .current {
   color: var(--text);
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -457,7 +457,7 @@ onBeforeUnmount(() => {
   border: 2px solid var(--bg);
   color: #fff;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1;
 }
 .spinning {
