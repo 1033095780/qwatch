@@ -1,6 +1,7 @@
-"""v0.4 基础数据：初始化数据库后写入钉钉渠道占位与配色。
+"""v0.5 基础数据：初始化数据库后写入钉钉渠道占位与配色。
 
 不再创建账户 / 策略 / 进程；账户由 API 创建，策略必须选择账户，进程上报自动发现。
+权益以策略为准（runners.equity/nav + runner_equity_points），账户权益为策略求和。
 运行会清空运行时数据（accounts/runners/processes/events/alerts/tokens/sessions），请先备份。
 """
 
@@ -17,7 +18,7 @@ CHANNELS = [
 ]
 
 TABLES = [
-    "account_equity_points",
+    "runner_equity_points",
     "accounts",
     "alert_deliveries",
     "alerts",

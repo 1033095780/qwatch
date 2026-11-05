@@ -1,4 +1,4 @@
-// StrategyDetail.vue — v0.4 策略详情：无 Tab；顶部账户权益曲线 + 账户/券商；下方左侧进程+告警、右侧动态（搜索/筛选/滚动）。
+// StrategyDetail.vue — v0.5 策略详情：无 Tab；顶部策略权益曲线 + 所属账户/券商；下方左侧进程+告警、右侧动态（搜索/筛选/滚动）。
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -49,7 +49,7 @@ const runner = computed<Runner | null>(() => detail.value?.runner ?? null);
 const account = computed(() => detail.value?.account ?? null);
 const accountName = computed(() => runner.value?.account_name || account.value?.name || '未关联账户');
 const accountBroker = computed(() => runner.value?.account_broker || account.value?.broker || '');
-const accountEquity = computed(() => account.value?.equity ?? null);
+const strategyEquity = computed(() => runner.value?.equity ?? null);
 const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
 const alerts = computed(() => detail.value?.alerts ?? []);
@@ -65,7 +65,7 @@ const filteredEvents = computed<RunnerEvent[]>(() => {
   });
 });
 const equityCurve = computed<CurvePoint[]>(() => {
-  const curve = detail.value?.account_equity_curve ?? [];
+  const curve = detail.value?.equity_curve ?? [];
   if (!curve.length) return [];
   const cfg = ranges.find((item) => item.key === range.value);
   if (!cfg || cfg.days === 0) return curve;
@@ -139,7 +139,7 @@ function alertStatusText(alert: Alert): string {
 }
 
 watch(() => settings.refreshSeq, () => { void load(false); });
-watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt, realtime.lastAccountChangeAt], scheduleReload);
+watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt, realtime.lastAccountChangeAt, realtime.lastEquityChangeAt], scheduleReload);
 onMounted(() => {
   void load(true);
   pollTimer = window.setInterval(() => { if (!document.hidden) void load(false); }, 15000);
@@ -189,8 +189,8 @@ onBeforeUnmount(() => {
 
       <section class="hero-break">
         <div class="hero-copy">
-          <span class="hero-label">账户权益</span>
-          <strong class="hero-equity mono">{{ accountEquity !== null ? '¥' + fmtNumber(accountEquity, 0) : '—' }}</strong>
+          <span class="hero-label">策略权益</span>
+          <strong class="hero-equity mono">{{ strategyEquity !== null ? '¥' + fmtNumber(strategyEquity, 0) : '—' }}</strong>
           <div class="hero-meta">
             <router-link :to="{ path: '/strategies', query: { account_id: runner.account_id } }" class="account-link">
               <span v-if="accountBroker && accountBroker !== accountName" class="broker-chip">{{ accountBroker }}</span>

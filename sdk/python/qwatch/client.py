@@ -1,4 +1,4 @@
-"""qwatch Python SDK v0.4 — 生产安全：构造和调用绝不阻塞策略主线程。
+"""qwatch Python SDK v0.5 — 生产安全：构造和调用绝不阻塞策略主线程。
 
 构造 Qwatch 只做本地参数校验并启动后台 daemon worker，不发起任何网络请求；
 tick / msg / signal / equity / nav 全部 O(1) 入队，绝不阻塞、绝不因发送失败抛异常。
@@ -46,7 +46,7 @@ class QwatchError(Exception):
 
 
 class AuthError(QwatchError):
-    """保留的异常类型；v0.4 起构造不再同步校验 token，401 通过 auth_failed 观测。"""
+    """保留的异常类型；v0.4+ 起构造不再同步校验 token，401 通过 auth_failed 观测。"""
 
 
 def _now_iso() -> str:
@@ -84,7 +84,7 @@ class Qwatch:
         q.tick()                                    # 主循环每轮调用，只更新 loop
         q.msg("夜盘暂停")                            # 动态消息
         q.signal("rb2601", "long", "open", 2, price=3521)  # 交易信号
-        q.equity(462300.12)                         # 账户权益（同 token 下任意进程可报）
+        q.equity(462300.12)                         # 所属策略权益（账户由后端求和）
 
     - 构造不同步联网；参数错误（base_url/token/instrument/heartbeat 等）才抛 ValueError。
     - 所有上报方法只入队，网络失败不抛异常；401 / 断网通过 stats、last_error、auth_failed 观测。
@@ -212,12 +212,12 @@ class Qwatch:
         return payload["id"]
 
     def equity(self, value: float) -> None:
-        """上报所属账户权益（同一 token 下任意进程可报，服务端以最后一次为准）。"""
+        """上报所属策略权益（写入 token 对应的策略，last-wins；账户权益由后端对策略求和）。"""
         number = self._positive_number(value, "equity")
         self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "equity": number})
 
     def nav(self, value: float) -> None:
-        """上报所属账户净值（v0.4 账户级 nav）。"""
+        """上报所属策略净值（v0.5 策略级 nav；账户净值由后端按权益加权）。"""
         number = self._positive_number(value, "nav")
         self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "nav": number})
 
@@ -459,7 +459,7 @@ class Qwatch:
             headers={
                 "Authorization": "Bearer " + self._token,
                 "Content-Type": "application/json; charset=utf-8",
-                "User-Agent": "qwatch-python/0.4.0",
+                "User-Agent": "qwatch-python/0.5.0",
             },
             method="POST",
         )

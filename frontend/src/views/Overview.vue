@@ -1,4 +1,4 @@
-// Overview.vue — v0.4 总览：账户级总权益/今日变动/策略在线/活跃告警 + 账户权益曲线 + 与策略页一致的大卡片网格 + 可滚动动态。
+// Overview.vue — v0.5 总览：总权益/今日变动/策略在线/活跃告警；主区左侧权益曲线、右侧策略大卡片（同策略页，内部滚动）；底部动态/告警。
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -17,7 +17,6 @@ import NavChart from '@/components/NavChart.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import StatusDot from '@/components/StatusDot.vue';
-import StrategyGrid from '@/components/StrategyGrid.vue';
 
 const settings = useSettingsStore();
 const realtime = useRealtimeStore();
@@ -43,7 +42,6 @@ const ranges = [
 ] as const;
 
 const accounts = computed<Account[]>(() => data.value?.accounts ?? []);
-const accountMap = computed(() => new Map(accounts.value.map((account) => [account.id, account])));
 const accountOptions = computed(() => [
   { id: 'all', label: '全部账户' },
   ...accounts.value.map((account) => ({ id: account.id, label: account.broker && account.broker !== account.name ? account.broker + ' · ' + account.name : account.name })),
@@ -92,12 +90,9 @@ async function loadAccountCurve(id: string): Promise<void> {
   if (!id || id === 'all') { accountCurve.value = []; return; }
   const cached = curveCache.get(id);
   if (cached) { accountCurve.value = cached; return; }
-  const runner = (data.value?.runners || []).find((item) => item.account_id === id);
-  if (!runner) { accountCurve.value = []; return; }
   curveLoading.value = true;
   try {
-    const detail = await api.runner(runner.id);
-    const curve = detail.account_equity_curve || [];
+    const curve = await api.accountEquityCurve(id);
     curveCache.set(id, curve);
     accountCurve.value = curve;
   } catch {
@@ -115,7 +110,10 @@ async function load(initial = false, silent = false): Promise<void> {
     if (selectedAccount.value !== 'all' && !(data.value.accounts || []).some((account) => account.id === selectedAccount.value)) {
       selectedAccount.value = 'all';
     }
-    if (selectedAccount.value !== 'all') await loadAccountCurve(selectedAccount.value);
+    if (selectedAccount.value !== 'all') {
+      curveCache.delete(selectedAccount.value);
+      await loadAccountCurve(selectedAccount.value);
+    }
   } catch (err) {
     if (!silent) error.value = err instanceof Error ? err.message : '总览加载失败';
   } finally {
@@ -125,7 +123,6 @@ async function load(initial = false, silent = false): Promise<void> {
 
 function selectAccount(id: string): void {
   selectedAccount.value = id;
-  curveCache.delete(id);
   void loadAccountCurve(id);
 }
 
@@ -139,7 +136,7 @@ function scheduleReload(): void {
 }
 
 watch(() => settings.refreshSeq, () => { void load(false, true); });
-watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt, realtime.lastAccountChangeAt], scheduleReload);
+watch(() => [realtime.lastAlertChangeAt, realtime.lastProcessChangeAt, realtime.lastEventAt, realtime.lastAccountChangeAt, realtime.lastEquityChangeAt], scheduleReload);
 
 onMounted(() => {
   void load(true);
@@ -162,9 +159,9 @@ onBeforeUnmount(() => {
       <div class="summary-grid">
         <div v-for="i in 4" :key="i" class="skel skel-card" style="height: 104px" />
       </div>
-      <div class="skel skel-card" style="height: 340px; border-radius: var(--radius-lg)" />
-      <div class="strategy-grid">
-        <div v-for="i in 3" :key="i" class="skel skel-card" style="height: 180px" />
+      <div class="overview-main">
+        <div class="skel skel-card" style="height: 420px; border-radius: var(--radius-lg)" />
+        <div class="skel skel-card" style="height: 420px; border-radius: var(--radius-lg)" />
       </div>
     </div>
     <div v-else-if="error && !data" class="card">
@@ -201,29 +198,31 @@ onBeforeUnmount(() => {
         </router-link>
       </div>
 
-      <SectionCard title="权益曲线">
-        <template #extra>
-          <div class="chart-tools">
-            <select :value="selectedAccount" class="chart-select" aria-label="选择账户" @change="selectAccount(($event.target as HTMLSelectElement).value)">
-              <option v-for="option in accountOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
-            </select>
-            <div class="range-tabs">
-              <button v-for="item in ranges" :key="item.key" type="button" :class="{ active: range === item.key }" @click="range = item.key">{{ item.label }}</button>
+      <div class="overview-main">
+        <SectionCard title="权益曲线">
+          <template #extra>
+            <div class="chart-tools">
+              <select :value="selectedAccount" class="chart-select" aria-label="选择账户" @change="selectAccount(($event.target as HTMLSelectElement).value)">
+                <option v-for="option in accountOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+              </select>
+              <div class="range-tabs">
+                <button v-for="item in ranges" :key="item.key" type="button" :class="{ active: range === item.key }" @click="range = item.key">{{ item.label }}</button>
+              </div>
             </div>
+          </template>
+          <div class="chart-wrap" :class="{ dimmed: curveLoading }">
+            <NavChart :data="equityCurve" :height="348" />
           </div>
-        </template>
-        <div class="chart-wrap" :class="{ dimmed: curveLoading }">
-          <NavChart :data="equityCurve" :height="292" />
-        </div>
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard title="策略状态">
-        <template #extra><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
-        <StrategyGrid v-if="data.runners.length">
-          <GroupCard v-for="runner in data.runners" :key="runner.id" :runner="runner" :account="accountMap.get(runner.account_id) || null" />
-        </StrategyGrid>
-        <EmptyState v-else compact title="还没有策略" description="前往「策略」页新建策略并生成接入令牌。" />
-      </SectionCard>
+        <SectionCard title="策略状态">
+          <template #extra><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
+          <div v-if="data.runners.length" class="strategy-column">
+            <GroupCard v-for="runner in data.runners" :key="runner.id" :runner="runner" />
+          </div>
+          <EmptyState v-else compact title="还没有策略" description="前往「策略」页新建策略并生成接入令牌。" />
+        </SectionCard>
+      </div>
 
       <div class="grid grid-2">
         <SectionCard title="动态">
@@ -260,14 +259,18 @@ onBeforeUnmount(() => {
 .ov-kpi-value.danger, .danger { color: var(--danger); }
 .ov-kpi-foot { margin-top: auto; padding-top: 6px; color: #cbd5e5; font-size: 10px; }
 .ov-kpi.link:hover { border-color: var(--border-strong); }
-.chart-tools { display: flex; align-items: center; gap: 8px; }
+.overview-main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: start; }
+.chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chart-select { height: 27px; min-width: 150px; max-width: 220px; padding: 0 24px 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 11px; outline: none; cursor: pointer; }
 .range-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .range-tabs button { height: 23px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
 .range-tabs button.active { background: var(--primary-soft); color: var(--text); }
 .chart-wrap { transition: opacity 160ms ease; }
 .chart-wrap.dimmed { opacity: 0.55; }
-.strategy-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--gap); }
+.strategy-column { display: flex; flex-direction: column; gap: 10px; max-height: 428px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.strategy-column::-webkit-scrollbar { width: 5px; }
+.strategy-column::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
+.strategy-column::-webkit-scrollbar-track { background: transparent; }
 .activity-scroll { max-height: 460px; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .activity-scroll::-webkit-scrollbar { width: 5px; }
 .activity-scroll::-webkit-scrollbar-thumb { background: #2b3a55; border-radius: 999px; }
@@ -286,7 +289,8 @@ onBeforeUnmount(() => {
 .link-more:hover { color: var(--text-2); }
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .strategy-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-main { grid-template-columns: minmax(0, 1fr); }
+  .strategy-column { max-height: 520px; }
 }
 @media (max-width: 760px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -295,8 +299,5 @@ onBeforeUnmount(() => {
   .chart-tools { align-items: flex-start; flex-direction: column; width: 100%; }
   .chart-select { width: 100%; max-width: none; }
   .range-tabs { align-self: stretch; justify-content: space-between; }
-}
-@media (max-width: 640px) {
-  .strategy-grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

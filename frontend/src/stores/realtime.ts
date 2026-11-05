@@ -43,6 +43,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
   const lastProcessChangeAt = ref(0);
   const lastEventAt = ref(0);
   const lastAccountChangeAt = ref(0);
+  const lastEquityChangeAt = ref(0);
   const started = ref(false);
   let off: (() => void) | null = null;
 
@@ -57,6 +58,10 @@ export const useRealtimeStore = defineStore('realtime', () => {
     }
     if (type.indexOf('account.') === 0) {
       lastAccountChangeAt.value = Date.now();
+      return;
+    }
+    if (type.indexOf('strategy.equity') === 0 || type === 'strategy.equity_updated') {
+      lastEquityChangeAt.value = Date.now();
       return;
     }
     if (type === 'process.updated' || type.indexOf('process.') === 0) {
@@ -90,7 +95,7 @@ export const useRealtimeStore = defineStore('realtime', () => {
   }
 
   return {
-    events, lastAlertChangeAt, lastProcessChangeAt, lastEventAt, lastAccountChangeAt,
+    events, lastAlertChangeAt, lastProcessChangeAt, lastEventAt, lastAccountChangeAt, lastEquityChangeAt,
     state, live, started, start, stop, clear,
   };
 });

@@ -1,4 +1,4 @@
-// router/index.ts — v0.4：5 个一级页面（总览/账户/策略/告警/设置）+ 策略详情 + 登录/404；旧链接重定向。
+// router/index.ts — v0.5：4 个一级页面（总览/策略/告警/设置）+ 策略详情 + 登录/404；旧链接重定向。
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
 
@@ -28,8 +28,6 @@ const router = createRouter({
       children: [
         { path: '', redirect: '/overview' },
         { path: 'overview', name: 'overview', component: () => import('@/views/Overview.vue'), meta: { title: '总览' } },
-        { path: 'accounts', name: 'accounts', component: () => import('@/views/Accounts.vue'), meta: { title: '账户' } },
-        { path: 'accounts/:id', redirect: '/accounts' },
         { path: 'strategies', name: 'strategies', component: () => import('@/views/Strategies.vue'), meta: { title: '策略' } },
         {
           path: 'strategies/:id', name: 'strategy-detail', component: () => import('@/views/StrategyDetail.vue'),
@@ -38,6 +36,8 @@ const router = createRouter({
         { path: 'alerts', name: 'alerts', component: () => import('@/views/Alerts.vue'), meta: { title: '告警' } },
         { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
         // 已下线页面：保留重定向，避免旧书签 404
+        { path: 'accounts', redirect: '/strategies' },
+        { path: 'accounts/:id', redirect: '/strategies' },
         { path: 'signals', redirect: '/overview' },
         { path: 'trades', redirect: '/overview' },
         { path: 'reports', redirect: '/overview' },

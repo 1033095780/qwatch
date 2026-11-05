@@ -1,10 +1,11 @@
-"""qwatch v0.4 后端：账户层级 + 账户级权益 + 可信看门狗。
+"""qwatch v0.5 后端：策略级权益 + 账户聚合 + 可信看门狗。
 
-- accounts = 账户（券商/账户级权益与净值）；runners = 策略（必须归属账户）
+- accounts = 账户（策略的自然分组，不存权益真相）；runners = 策略（必须归属账户）
 - processes = 策略下稳定进程（自动发现，可 retired）；token = 策略
-- POST /api/v1/report 接收心跳/loop/msg/signal/equity/nav；equity/nav 写入策略所属账户（最后上报者胜出）
+- POST /api/v1/report 接收心跳/loop/msg/signal/equity/nav；equity/nav 写入策略（last-wins）
+- 账户权益=策略权益求和，账户净值=按策略 equity 加权；曲线按策略曲线聚合
 - 告警只有 P0：heartbeat_lost / runner_stalled，按策略汇总一条
-- GET /api/v1/stream 为 SSE 实时事件（alert.* / process.updated / event.* / account.updated）
+- GET /api/v1/stream 为 SSE 实时事件（alert.* / process.updated / event.* / strategy.equity_updated / account.updated）
 """
 
 from __future__ import annotations
@@ -35,12 +36,14 @@ from .db import DB_PATH, SCHEMA_VERSION, connect, dumps, get_setting, init_db, i
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "frontend" / "dist"
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 PASSWORD = os.environ.get("QWATCH_PASSWORD", "qwatch")
 SESSION_HOURS = 12
 HEARTBEAT_TIMEOUT_S = 60
 STALL_REPEAT = 3
 WATCHDOG_INTERVAL_S = 5
+# 后端重启后给策略进程一个重连窗口，避免启动瞬间把昨天的心跳判死并发送 P0
+STARTUP_GRACE_S = 90
 MAX_EVENTS_RETURN = 100
 
 logging.basicConfig(
@@ -226,6 +229,10 @@ def runner_view(runner, processes, statuses: dict[int, str], account=None) -> di
         "account_id": runner["account_id"] if "account_id" in keys else "",
         "account_name": account["name"] if account else "",
         "account_broker": (account["broker"] or "") if account else "",
+        "equity": _fmt_money(runner["equity"]) if "equity" in keys else None,
+        "nav": _fmt_nav(runner["nav"]) if "nav" in keys else None,
+        "equity_updated_at": runner["equity_updated_at"] if "equity_updated_at" in keys else None,
+        "nav_updated_at": runner["nav_updated_at"] if "nav_updated_at" in keys else None,
         "created_at": runner["created_at"],
     }
 
@@ -238,68 +245,93 @@ def _fmt_nav(value) -> str | None:
     return f"{float(value):.6f}" if value is not None else None
 
 
-def account_equity_sparkline(conn: sqlite3.Connection, account_id: str) -> list[float]:
-    rows = conn.execute(
-        "SELECT equity FROM account_equity_points WHERE account_id = ? AND equity IS NOT NULL "
-        "ORDER BY id DESC LIMIT 24",
-        (account_id,),
-    ).fetchall()
-    return [round(float(row["equity"]), 2) for row in reversed(rows)]
-
-
-def account_equity_curve(conn: sqlite3.Connection, account_id: str, limit: int = 1000) -> list[dict[str, str]]:
+def runner_equity_curve(conn: sqlite3.Connection, runner_id: str, limit: int = 1000) -> list[dict[str, str]]:
     rows = list(conn.execute(
-        "SELECT ts, equity FROM account_equity_points WHERE account_id = ? AND equity IS NOT NULL "
+        "SELECT ts, equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL "
         "ORDER BY id DESC LIMIT ?",
-        (account_id, limit),
+        (runner_id, limit),
     ))
     return [{"ts": row["ts"], "value": _fmt_money(row["equity"])} for row in reversed(rows)]
 
 
-def merged_account_equity_curve(conn: sqlite3.Connection, account_ids: list[str]) -> list[dict[str, str]]:
-    """所有账户权益曲线合并；所有有数据的账户都有点后才开始，避免逐账户上线造成假跳变。"""
-    per_account: dict[str, list[tuple[str, float]]] = {}
-    for account_id in account_ids:
+def _strategy_series(conn: sqlite3.Connection, runner_ids: list[str], per_limit: int = 500) -> dict[str, list[tuple[str, float]]]:
+    per: dict[str, list[tuple[str, float]]] = {}
+    for runner_id in runner_ids:
         rows = conn.execute(
-            "SELECT ts, equity FROM account_equity_points WHERE account_id = ? AND equity IS NOT NULL "
-            "ORDER BY id DESC LIMIT 500",
-            (account_id,),
+            "SELECT ts, equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL "
+            "ORDER BY id DESC LIMIT ?",
+            (runner_id, per_limit),
         ).fetchall()
         if rows:
-            per_account[account_id] = [(row["ts"], float(row["equity"])) for row in reversed(rows)]
-    if not per_account:
+            per[runner_id] = [(row["ts"], float(row["equity"])) for row in reversed(rows)]
+    return per
+
+
+def merged_equity_curve(conn: sqlite3.Connection, runner_ids: list[str], limit: int = 1000) -> list[dict[str, str]]:
+    """把多个策略的权益曲线按时间合并求和（前向填充，尚未上报的策略按 0 计）。"""
+    per = _strategy_series(conn, runner_ids)
+    if not per:
         return []
-    timeline = sorted({ts for series in per_account.values() for ts, _ in series})
+    timeline = sorted({ts for series in per.values() for ts, _ in series})
     latest: dict[str, float] = {}
-    pointers: dict[str, int] = {account_id: 0 for account_id in per_account}
-    required = set(per_account)
+    pointers: dict[str, int] = {runner_id: 0 for runner_id in per}
     curve: list[dict[str, str]] = []
     for ts in timeline:
-        for account_id, series in per_account.items():
-            idx = pointers[account_id]
+        for runner_id, series in per.items():
+            idx = pointers[runner_id]
             while idx < len(series) and series[idx][0] <= ts:
-                latest[account_id] = series[idx][1]
+                latest[runner_id] = series[idx][1]
                 idx += 1
-            pointers[account_id] = idx
-        if required.issubset(latest):
+            pointers[runner_id] = idx
+        if latest:
             curve.append({"ts": ts, "value": f"{sum(latest.values()):.2f}"})
-    return curve[-500:]
+    return curve[-limit:]
+
+
+def account_equity_curve(conn: sqlite3.Connection, account_id: str, limit: int = 1000) -> list[dict[str, str]]:
+    runner_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM runners WHERE account_id = ? ORDER BY created_at", (account_id,)
+    )]
+    return merged_equity_curve(conn, runner_ids, limit)
+
+
+def strategy_equity_sparkline(conn: sqlite3.Connection, runner_id: str) -> list[float]:
+    rows = conn.execute(
+        "SELECT equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL "
+        "ORDER BY id DESC LIMIT 24",
+        (runner_id,),
+    ).fetchall()
+    return [round(float(row["equity"]), 2) for row in reversed(rows)]
+
+
+def account_equity_sparkline(conn: sqlite3.Connection, account_id: str) -> list[float]:
+    curve = account_equity_curve(conn, account_id, 24)
+    return [round(float(point["value"]), 2) for point in curve]
 
 
 def account_view(conn: sqlite3.Connection, row, strategy_views: list[dict[str, Any]] | None = None,
                  with_sparkline: bool = True) -> dict[str, Any]:
     strategies = strategy_views or []
     online = sum(1 for item in strategies if item["status"] == "running")
-    keys = set(row.keys())
+    equities = [float(item["equity"]) for item in strategies if item.get("equity") is not None]
+    total_equity = sum(equities) if equities else None
+    # 契约：净值 = Σ(nav*equity)/Σ(equity)；缺 nav 的策略分子按 0 计
+    weighted_nav = None
+    if total_equity and total_equity > 0:
+        numerator = sum(
+            float(item["nav"]) * float(item["equity"]) for item in strategies
+            if item.get("equity") is not None and item.get("nav") is not None
+        )
+        weighted_nav = numerator / total_equity
+    updated_values = [item.get("equity_updated_at") for item in strategies if item.get("equity_updated_at")]
     return {
         "id": row["id"],
         "name": row["name"],
         "broker": row["broker"] or "",
         "description": row["description"] or "",
-        "equity": _fmt_money(row["equity"]),
-        "nav": _fmt_nav(row["nav"]),
-        "equity_updated_at": row["equity_updated_at"] if "equity_updated_at" in keys else None,
-        "nav_updated_at": row["nav_updated_at"] if "nav_updated_at" in keys else None,
+        "equity": _fmt_money(total_equity),
+        "nav": _fmt_nav(weighted_nav),
+        "equity_updated_at": max(updated_values) if updated_values else None,
         "strategy_count": len(strategies),
         "online_strategies": online,
         "equity_sparkline": account_equity_sparkline(conn, row["id"]) if with_sparkline else [],
@@ -314,9 +346,9 @@ def _runner_views(conn: sqlite3.Connection, runner_rows, processes_by_runner, ac
         rows = processes_by_runner.get(runner["id"], [])
         statuses = {row["id"]: process_status(row, now_dt(), bool(runner["paused"])) for row in rows}
         account = accounts_by_id.get(runner["account_id"] if "account_id" in runner.keys() else "")
-        grouped[runner["account_id"] if "account_id" in runner.keys() else ""].append(
-            runner_view(runner, rows, statuses, account)
-        )
+        view = runner_view(runner, rows, statuses, account)
+        view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
+        grouped[runner["account_id"] if "account_id" in runner.keys() else ""].append(view)
     return grouped
 
 
@@ -622,8 +654,7 @@ def create_account(payload: dict[str, Any] = Body(default={}), user: str = Depen
     created = iso_now()
     with connect() as conn:
         conn.execute(
-            "INSERT INTO accounts(id,name,broker,description,equity,nav,equity_updated_at,nav_updated_at,created_at) "
-            "VALUES(?,?,?,?,NULL,NULL,NULL,NULL,?)",
+            "INSERT INTO accounts(id,name,broker,description,created_at) VALUES(?,?,?,?,?)",
             (account_id, name[:80], broker[:80], description, created),
         )
         row = conn.execute("SELECT * FROM accounts WHERE id = ?", (account_id,)).fetchone()
@@ -657,6 +688,14 @@ def account_detail(account_id: str, user: str = Depends(require_user)) -> dict[s
         row = _account_or_404(conn, account_id)
         strategies = _account_strategy_views(conn, account_id)
         return {"account": account_view(conn, row, strategies), "strategies": strategies}
+
+
+@app.get("/api/v1/accounts/{account_id}/equity_curve")
+def account_equity_curve_endpoint(account_id: str, user: str = Depends(require_user)) -> list[dict[str, str]]:
+    """账户聚合权益曲线：该账户下各策略 equity 曲线按时间相加。"""
+    with connect() as conn:
+        _account_or_404(conn, account_id)
+        return account_equity_curve(conn, account_id)
 
 
 # ---------- 路由：策略组 ----------
@@ -748,7 +787,9 @@ def list_runners(
                 continue
             rows = by_runner.get(runner["id"], [])
             statuses = {row["id"]: process_status(row, now_dt(), bool(runner["paused"])) for row in rows}
-            items.append(runner_view(runner, rows, statuses, accounts_by_id.get(runner["account_id"])))
+            view = runner_view(runner, rows, statuses, accounts_by_id.get(runner["account_id"]))
+            view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
+            items.append(view)
     if status:
         items = [item for item in items if item["status"] == status]
     if q:
@@ -773,13 +814,15 @@ def runner_detail(runner_id: str, user: str = Depends(require_user)) -> dict[str
             "SELECT * FROM alerts WHERE runner_id = ? ORDER BY starts_at DESC LIMIT 50", (runner_id,)
         ).fetchall()
         strategy_views = _account_strategy_views(conn, runner["account_id"]) if account else []
+        runner_data = runner_view(runner, processes, statuses, account)
+        runner_data["equity_sparkline"] = strategy_equity_sparkline(conn, runner_id)
         return {
-            "runner": runner_view(runner, processes, statuses, account),
+            "runner": runner_data,
             "account": account_view(conn, account, strategy_views) if account else None,
             "processes": [process_view(row, statuses[row["id"]], at, bool(runner["paused"])) for row in processes],
             "events": [event_view(row) for row in events],
             "alerts": [alert_view(row, runner["name"]) for row in alerts],
-            "account_equity_curve": account_equity_curve(conn, runner["account_id"]) if account else [],
+            "equity_curve": runner_equity_curve(conn, runner_id),
         }
 
 
@@ -963,35 +1006,28 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
             conn.execute("UPDATE processes SET last_tick = ?, updated_at = ? WHERE id = ?",
                          (last_tick, now, process["id"]))
         if nav_value is not None or equity_value is not None:
-            account = conn.execute("SELECT * FROM accounts WHERE id = ?", (runner["account_id"],)).fetchone()
-            if account is None:
-                raise HTTPException(status_code=500, detail="策略未绑定有效账户")
-            new_equity = equity_value if equity_value is not None else account["equity"]
-            new_nav = nav_value if nav_value is not None else account["nav"]
-            equity_at = now if equity_value is not None else account["equity_updated_at"]
-            nav_at = now if nav_value is not None else account["nav_updated_at"]
+            new_equity = equity_value if equity_value is not None else runner["equity"]
+            new_nav = nav_value if nav_value is not None else runner["nav"]
+            equity_at = now if equity_value is not None else runner["equity_updated_at"]
+            nav_at = now if nav_value is not None else runner["nav_updated_at"]
             conn.execute(
-                "UPDATE accounts SET equity = ?, nav = ?, equity_updated_at = ?, nav_updated_at = ? WHERE id = ?",
-                (new_equity, new_nav, equity_at, nav_at, account["id"]),
+                "UPDATE runners SET equity = ?, nav = ?, equity_updated_at = ?, nav_updated_at = ? WHERE id = ?",
+                (new_equity, new_nav, equity_at, nav_at, runner["id"]),
             )
             conn.execute(
-                "INSERT INTO account_equity_points(account_id, ts, equity, nav, created_at) VALUES(?,?,?,?,?)",
-                (account["id"], now, new_equity, new_nav, now),
+                "INSERT INTO runner_equity_points(runner_id, ts, equity, nav, created_at) VALUES(?,?,?,?,?)",
+                (runner["id"], now, new_equity, new_nav, now),
             )
-            updated_account = conn.execute("SELECT * FROM accounts WHERE id = ?", (account["id"],)).fetchone()
             sse.publish({
-                "type": "account.updated",
+                "type": "strategy.equity_updated",
                 "ts": now,
-                "account": {
-                    "id": updated_account["id"],
-                    "name": updated_account["name"],
-                    "broker": updated_account["broker"],
-                    "equity": _fmt_money(updated_account["equity"]),
-                    "nav": _fmt_nav(updated_account["nav"]),
-                    "equity_updated_at": updated_account["equity_updated_at"],
-                    "nav_updated_at": updated_account["nav_updated_at"],
-                },
+                "runner_id": runner["id"],
+                "equity": _fmt_money(new_equity),
+                "nav": _fmt_nav(new_nav),
+                "equity_updated_at": equity_at,
+                "nav_updated_at": nav_at,
             })
+            sse.publish({"type": "account.updated", "ts": now, "account_id": runner["account_id"]})
         if msg and not has_signal:
             cursor = conn.execute(
                 "INSERT INTO events(runner_id, instrument, ts, type, text, created_at) VALUES(?,?,?,?,?,?)",
@@ -1032,6 +1068,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             rows = by_runner.get(runner["id"], [])
             statuses = {row["id"]: process_status(row, now_dt(), bool(runner["paused"])) for row in rows}
             view = runner_view(runner, rows, statuses, accounts_by_id.get(runner["account_id"]))
+            view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
             runner_views_list.append(view)
             grouped[runner["account_id"]].append(view)
         account_items = [account_view(conn, row, grouped.get(row["id"], [])) for row in account_rows]
@@ -1059,25 +1096,25 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
         today_start = datetime.now().astimezone().replace(
             hour=0, minute=0, second=0, microsecond=0
         ).astimezone(timezone.utc).isoformat()
-        for account in account_rows:
-            if account["equity"] is None:
+        for runner in runner_rows:
+            if runner["equity"] is None:
                 continue
             has_equity = True
-            total_equity += float(account["equity"])
+            total_equity += float(runner["equity"])
             prev = conn.execute(
-                "SELECT equity FROM account_equity_points WHERE account_id = ? AND equity IS NOT NULL AND ts < ? "
+                "SELECT equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL AND ts < ? "
                 "ORDER BY id DESC LIMIT 1",
-                (account["id"], today_start),
+                (runner["id"], today_start),
             ).fetchone()
             if prev is None:
                 # 当日首次上报：用当天首个点做基线，避免面板显示空值
                 prev = conn.execute(
-                    "SELECT equity FROM account_equity_points WHERE account_id = ? AND equity IS NOT NULL AND ts >= ? "
+                    "SELECT equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL AND ts >= ? "
                     "ORDER BY id ASC LIMIT 1",
-                    (account["id"], today_start),
+                    (runner["id"], today_start),
                 ).fetchone()
             if prev is not None:
-                today_change += float(account["equity"]) - float(prev["equity"])
+                today_change += float(runner["equity"]) - float(prev["equity"])
                 has_prev_equity = True
         return {
             "as_of": iso_now(),
@@ -1091,7 +1128,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             "recent_events": [event_view(row) for row in event_rows],
             "total_equity": f"{total_equity:.2f}" if has_equity else None,
             "today_equity_change": f"{today_change:.2f}" if has_equity and has_prev_equity else None,
-            "equity_curve": merged_account_equity_curve(conn, [row["id"] for row in account_rows]),
+            "equity_curve": merged_equity_curve(conn, [row["id"] for row in runner_rows]),
             "accounts": account_items,
             "runners": runner_views_list,
         }
@@ -1310,9 +1347,17 @@ async def stream(
 
 # ---------- 后台任务 ----------
 
+_started_monotonic = 0.0
+
+
 async def watchdog_loop() -> None:
+    global _started_monotonic
+    _started_monotonic = time.monotonic()
     while True:
         try:
+            if time.monotonic() - _started_monotonic < STARTUP_GRACE_S:
+                await asyncio.sleep(WATCHDOG_INTERVAL_S)
+                continue
             with connect() as conn:
                 runners = conn.execute("SELECT id FROM runners WHERE paused = 0").fetchall()
                 for row in runners:

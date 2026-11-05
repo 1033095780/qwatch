@@ -1,5 +1,5 @@
-// api/types.ts — qwatch v0.4 API 契约类型（docs/V04-CONTRACT.md）。
-// 账户（券商/账户）是净值/权益来源；策略属于账户；进程属于策略。权益/净值按账户展示。
+// api/types.ts — qwatch v0.5 API 契约类型（docs/V05-CONTRACT.md）。
+// 策略级权益：任意进程上报 equity/nav 写入所属策略，last-wins；账户权益 = 下属策略之和（API 计算字段）。
 
 export type RunnerStatus = 'running' | 'degraded' | 'offline' | 'paused';
 export type ProcessStatus = RunnerStatus | 'retired';
@@ -25,7 +25,7 @@ export interface CurvePoint {
   value: string;
 }
 
-/** 账户：券商/账户层级；equity/nav 由下属任意策略进程上报更新（最后一次为准） */
+/** 账户：只是策略的自然分组；equity/nav 为计算字段（Σ策略 / 加权净值） */
 export interface Account {
   id: string;
   name: string;
@@ -38,6 +38,7 @@ export interface Account {
   created_at?: string | null;
   strategy_count?: number;
   online_strategies?: number;
+  /** 账户聚合曲线最后 24 点 */
   equity_sparkline?: number[];
 }
 
@@ -47,18 +48,7 @@ export interface AccountCreateRequest {
   description?: string;
 }
 
-export interface AccountPatch {
-  name?: string;
-  broker?: string;
-  description?: string;
-}
-
-export interface AccountDetail {
-  account: Account;
-  strategies: Runner[];
-}
-
-/** GET /runners 列表项（策略组，含所属账户信息；不返回 runner 自身权益） */
+/** GET /runners 列表项（策略组；含策略级权益与所属账户信息） */
 export interface Runner {
   id: string;
   name: string;
@@ -71,6 +61,12 @@ export interface Runner {
   account_id: string;
   account_name: string;
   account_broker: string;
+  /** 策略级权益/净值（由该策略进程上报，last-wins） */
+  equity?: string | null;
+  nav?: string | null;
+  equity_updated_at?: string | null;
+  nav_updated_at?: string | null;
+  equity_sparkline?: number[];
   created_at?: string | null;
 }
 
@@ -114,12 +110,12 @@ export interface Alert {
 
 export interface RunnerDetail {
   runner: Runner;
-  account: Account;
+  account: Account | null;
   processes: ProcessInfo[];
   events: RunnerEvent[];
   alerts: Alert[];
-  /** 该策略所属账户的权益曲线（账户级） */
-  account_equity_curve: CurvePoint[];
+  /** 该策略自身的权益曲线（策略级） */
+  equity_curve: CurvePoint[];
 }
 
 export interface Overview {

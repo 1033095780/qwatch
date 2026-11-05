@@ -20,14 +20,9 @@ const PAD_Y = 12;
 const values = computed(() => props.data.map((p) => Number(p.value)).filter((v) => Number.isFinite(v)));
 const rawMin = computed(() => (values.value.length ? Math.min(...values.value) : 0));
 const rawMax = computed(() => (values.value.length ? Math.max(...values.value) : 1));
-const min = computed(() => {
-  const pad = (rawMax.value - rawMin.value || Math.max(1, rawMax.value * 0.01)) * 0.08;
-  return rawMin.value - pad;
-});
-const max = computed(() => {
-  const pad = (rawMax.value - rawMin.value || Math.max(1, rawMax.value * 0.01)) * 0.08;
-  return rawMax.value + pad;
-});
+const pad = computed(() => Math.max((rawMax.value - rawMin.value) * 0.08, Math.abs(rawMax.value) * 0.005, 1));
+const min = computed(() => rawMin.value - pad.value);
+const max = computed(() => rawMax.value + pad.value);
 const span = computed(() => max.value - min.value || 1);
 const coords = computed(() => {
   const n = values.value.length;

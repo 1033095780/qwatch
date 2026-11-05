@@ -1,9 +1,10 @@
 # qwatch Python SDK
 
-零依赖（标准库）策略接入库：**一个策略进程一个实例**。心跳、动态消息、交易信号和账户权益
+零依赖（标准库）策略接入库：**一个策略进程一个实例**。心跳、动态消息、交易信号和策略级权益
 统一走 `POST /api/v1/report`，本地按 instrument 分文件记录日志。
 
-v0.4 起 SDK 是**生产安全**的：构造和所有上报方法都不阻塞策略主线程，网络失败在后台重试。
+v0.4 起 SDK 是**生产安全**的（构造和所有上报方法都不阻塞策略主线程，网络失败后台重试）；
+v0.5 起 `equity()` / `nav()` 写入**所属策略**，账户权益由后端对各策略求和、账户净值按权益加权。
 
 ## 安装
 
@@ -30,18 +31,18 @@ for i in range(1, 100000):
     if i % 60 == 0:
         q.msg("夜盘暂停")                            # 动态消息
     if i % 120 == 0:
-        q.equity(1_000_000 + i * 10)                 # 所属账户权益（同 token 任意进程可报）
-        q.nav(1.0 + i * 0.00001)                     # 所属账户净值
+        q.equity(1_200_000 + i * 10)                 # 所属策略权益（账户由后端求和）
+        q.nav(1.0 + i * 0.00001)                     # 所属策略净值
     time.sleep(10)
 
 q.close()
 ```
 
-一个策略 token 下可以挂多个进程：每个进程一个实例，只填自己的 instrument。
+一个策略 token 下可以挂多个进程：每个进程一个实例，只填自己的 instrument；同一策略下任意进程
+上报 equity/nav 都写入该策略（last-wins），建议由主进程定时上报。
 
 ```python
 rb = Qwatch(URL, TOKEN, instrument="rb")
-ag = Qwatch(URL, TOKEN, instrument="ag")
 ```
 
 ## API
@@ -54,8 +55,8 @@ q.tick(last_tick=None) -> loop          # 只更新 loop，不发请求
 q.msg(text)                             # 动态消息（也算心跳）
 q.signal(contract, direction, action, qty,
          *, price=None, amount=None, msg=None, id=None) -> signal_id
-q.equity(value)                         # 账户权益，必须 > 0
-q.nav(value)                            # 账户净值，必须 > 0
+q.equity(value)                         # 所属策略权益，必须 > 0
+q.nav(value)                            # 所属策略净值，必须 > 0
 q.stats                                 # {"sent","failed","retried","dropped","queued"}
 q.last_error                            # 最近一次失败原因（网络/HTTP detail）
 q.auth_failed                           # token 被 401 拒绝后为 True（不影响调用方）
@@ -80,7 +81,7 @@ q.close(flush_timeout=2.0)              # 停止 worker 并在上限内尽力冲
 ```
 2026-11-04 18:30:00 INFO event=init instrument=rb heartbeat=30 timeout=5 queue_size=1000 url=http://127.0.0.1:8080 log=logs/rb.log
 2026-11-04 18:30:00 INFO instrument=rb action=heartbeat status=200 ok=True latency_ms=2.4 attempt=1 id=- error=
-2026-11-04 18:30:10 INFO instrument=rb action=signal status=200 ok=True latency_ms=2.1 attempt=1 id=sig_... error=
+2026-11-04 18:30:10 INFO instrument=rb action=equity status=200 ok=True latency_ms=2.1 attempt=1 id=- error=
 ```
 
 ## 注意
@@ -88,4 +89,4 @@ q.close(flush_timeout=2.0)              # 停止 worker 并在上限内尽力冲
 - token 无效（401）不再在构造时抛 AuthError；请观测 `last_error` / `auth_failed`。
 - 纯心跳也必须带 instrument（SDK 自动补齐）。
 - 信号字段：`contract + direction + action + qty` 必填，price/amount 可选且不能为负。
-- v0.4 后端按账户汇总权益：同 token 下任意进程上报 equity/nav 都写入该策略所属账户。
+- v0.5 后端按策略汇总：`equity` / `nav` 写入 token 对应策略，账户权益=账户下策略权益之和，账户净值=Σ(nav×equity)/Σ(equity)。

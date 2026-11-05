@@ -1,7 +1,7 @@
-// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记（v0.4 账户层级）。
+// api/client.ts — 统一 fetch 封装：Bearer token、错误映射、401 广播、全局新鲜度标记（v0.5 策略级权益）。
 import { reactive } from 'vue';
 import type {
-  Account, AccountCreateRequest, AccountDetail, AccountPatch, Alert, AlertsResponse, ChannelPatch, ListResponse,
+  Account, AccountCreateRequest, Alert, AlertsResponse, ChannelPatch, CurvePoint, ListResponse,
   LoginResponse, Overview, ProcessInfo, Runner, RunnerCreateRequest, RunnerDetail, SettingsData, StrategyToken,
   TestChannelResult, TokenCreateRequest, TokenCreateResult, TokensResponse, User,
 } from './types';
@@ -109,14 +109,13 @@ export const api = {
   accounts() {
     return request<ListResponse<Account>>('/accounts');
   },
-  account(id: string) {
-    return request<AccountDetail>('/accounts/' + encodeURIComponent(id));
-  },
   createAccount(body: AccountCreateRequest) {
     return request<{ account: Account }>('/accounts', { method: 'POST', body: JSON.stringify(body) });
   },
-  updateAccount(id: string, body: AccountPatch) {
-    return request<{ account: Account }>('/accounts/' + encodeURIComponent(id), { method: 'PATCH', body: JSON.stringify(body) });
+  /** 账户聚合权益曲线（v0.5，供总览账户选择） */
+  async accountEquityCurve(id: string): Promise<CurvePoint[]> {
+    const res = await request<CurvePoint[] | { items?: CurvePoint[] }>('/accounts/' + encodeURIComponent(id) + '/equity_curve');
+    return Array.isArray(res) ? res : res.items ?? [];
   },
   runners(params: { status?: string; q?: string; account_id?: string } = {}) {
     return request<ListResponse<Runner>>('/runners' + qs(params));

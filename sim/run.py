@@ -1,6 +1,6 @@
-"""qwatch v0.4 三策略模拟器：2 个账户（国金证券 / 徽商期货）+ 3 个策略 + 4 个稳定进程。
+"""qwatch v0.5 三策略模拟器：2 个账户（国金证券 / 徽商期货）+ 3 个策略 + 4 个稳定进程。
 
-先启动 v0.4 后端：
+先启动 v0.5 后端：
     python -m backend
 再运行模拟器（Ctrl+C 退出）：
     python -m sim.run
@@ -11,7 +11,8 @@
     QWATCH_SIM_LOG_DIR   SDK 日志目录，默认仓库根 logs/（自测时可指向临时目录）
 
 每个策略一个 token，缓存复用 data/sim_tokens.json；进程名固定（rb / IF / ag / au），
-白银波段是双进程策略。进程只上报心跳 / tick / msg / signal / 所属账户权益，无 PnL。
+白银波段是双进程策略。v0.5 口径：每个策略由主进程上报自己的策略权益/净值（last-wins），
+账户权益/净值由后端对策略求和/加权；进程只发心跳 / tick / msg / signal / equity / nav，无 PnL。
 """
 
 from __future__ import annotations
@@ -44,21 +45,23 @@ HEARTBEAT_S = 30
 TICK_S = 10
 REQUEST_TIMEOUT_S = 10
 
-# 2 个账户：股票账户 + 期货账户（名称/券商来自 v0.4 契约示例）
+# 2 个账户：股票账户 + 期货账户
 ACCOUNTS: list[dict[str, Any]] = [
     {"name": "国金证券", "broker": "国金证券", "description": "股票账户，模拟黑色系与贵金属持仓"},
     {"name": "徽商期货", "broker": "徽商期货", "description": "期货账户，模拟股指日内交易"},
 ]
 
-# 3 个策略按账户分配；instruments 是稳定进程名，换月只换合约代码、不改进程名。
+# 3 个策略按账户分配；主进程（report_equity=True）上报策略级权益/净值。
+# instruments 是稳定进程名，换月只换合约代码、不改进程名。
 STRATEGIES: list[dict[str, Any]] = [
     {
         "name": "螺纹钢趋势",
         "account": "国金证券",
         "description": "黑色系 15 分钟级别趋势跟踪，夜盘连续持有。",
+        "base_equity": 1_200_000.0,
         "processes": [
             {
-                "instrument": "rb", "contract": "rb2601", "base_price": 3510.0,
+                "instrument": "rb", "contract": "rb2601", "base_price": 3510.0, "report_equity": True,
                 "qty_range": (2, 8), "signal_seconds": (30, 45), "long_bias": 0.7,
                 "signals": ["均线金叉", "突破前高", "回踩确认", "趋势止盈", "ATR 止损"],
                 "messages": ["夜盘正常", "行情震荡", "等待突破"],
@@ -69,9 +72,10 @@ STRATEGIES: list[dict[str, Any]] = [
         "name": "股指日内",
         "account": "徽商期货",
         "description": "IF 日内动量，开盘后半小时入场，收盘前平仓。",
+        "base_equity": 800_000.0,
         "processes": [
             {
-                "instrument": "IF", "contract": "IF2612", "base_price": 3985.0,
+                "instrument": "IF", "contract": "IF2612", "base_price": 3985.0, "report_equity": True,
                 "qty_range": (1, 3), "signal_seconds": (15, 25), "long_bias": 0.55,
                 "signals": ["开盘动能", "日内新高", "动量衰减", "止损离场", "收盘前平仓"],
                 "messages": ["盘中监控", "波动放大", "等待收盘"],
@@ -82,15 +86,16 @@ STRATEGIES: list[dict[str, Any]] = [
         "name": "白银波段",
         "account": "国金证券",
         "description": "贵金属波段，ATR 止损，隔夜仓位不超过 30%（ag / au 双进程）。",
+        "base_equity": 600_000.0,
         "processes": [
             {
-                "instrument": "ag", "contract": "ag2601", "base_price": 7700.0,
+                "instrument": "ag", "contract": "ag2601", "base_price": 7700.0, "report_equity": True,
                 "qty_range": (1, 5), "signal_seconds": (20, 40), "long_bias": 0.5,
                 "signals": ["贵金属走强", "波段减仓", "止盈离场", "ATR 止损"],
                 "messages": ["夜盘回补", "金银比修复"],
             },
             {
-                "instrument": "au", "contract": "au2601", "base_price": 625.0,
+                "instrument": "au", "contract": "au2601", "base_price": 625.0, "report_equity": False,
                 "qty_range": (1, 3), "signal_seconds": (25, 45), "long_bias": 0.5,
                 "signals": ["金价新高", "波段止盈", "避险升温"],
                 "messages": ["贵金属监控"],
@@ -98,8 +103,6 @@ STRATEGIES: list[dict[str, Any]] = [
         ],
     },
 ]
-
-ACCOUNT_BASE_EQUITY = {"国金证券": 2_000_000.0, "徽商期货": 1_200_000.0}
 
 
 # ---------- HTTP ----------
@@ -154,7 +157,7 @@ def ensure_accounts(url: str, session: str) -> dict[str, dict[str, Any]]:
 
 
 def ensure_runners(url: str, session: str, accounts: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """按账户分配复用或创建三个策略组，返回 name -> runner。"""
+    """按账户分配复用或创建三个策略，返回 name -> runner。"""
     items = _request(url, "GET", "/api/v1/runners", token=session)["items"]
     by_name = {item["name"]: item for item in items}
     runners: dict[str, dict[str, Any]] = {}
@@ -260,25 +263,26 @@ def ensure_tokens(
 
 # ---------- 模拟进程 ----------
 
-class AccountLedger:
-    """账户级权益账本：同账户下多个进程共享，最后一次上报为准。"""
+class StrategyLedger:
+    """策略级权益账本：每个策略独立演进；账户权益/净值由后端对策略求和/加权。"""
 
     def __init__(self, name: str, base_equity: float) -> None:
         self.name = name
         self.base_equity = float(base_equity)
         self._value = self.base_equity
         self._lock = threading.Lock()
-        self._rng = random.Random("ledger-" + name)
+        self._rng = random.Random("strategy-" + name)
 
     @property
     def value(self) -> float:
         with self._lock:
             return round(self._value, 2)
 
-    def step(self) -> float:
+    def step(self) -> tuple[float, float]:
+        """推进一次策略权益，返回 (equity, nav)。"""
         with self._lock:
             self._value = max(1.0, self._value * (1 + self._rng.gauss(0.0002, 0.0008)))
-            return round(self._value, 2)
+            return round(self._value, 2), round(self._value / self.base_equity, 6)
 
 
 def _emit_signal(
@@ -320,9 +324,9 @@ def _emit_signal(
 
 def _run_process(
     strategy: dict[str, Any], process: dict[str, Any], url: str, token: str,
-    ledger: AccountLedger, stop: threading.Event,
+    ledger: StrategyLedger | None, stop: threading.Event,
 ) -> None:
-    """一个进程一个 Qwatch：tick/msg/signal/equity 全部非阻塞入队，后台 worker 负责发送。"""
+    """一个进程一个 Qwatch：tick/msg/signal/equity/nav 全部非阻塞入队，后台 worker 负责发送。"""
     label = strategy["name"] + "/" + process["instrument"]
     rnd = random.Random(f"{label}-{time.time_ns()}")
     q = Qwatch(
@@ -348,11 +352,12 @@ def _run_process(
                 msg_count += 1
                 print(f"[{label}] 动态 {text}")
                 next_msg = now + rnd.uniform(30, 60)
-            if now >= next_equity:
-                value = ledger.step()
+            if ledger is not None and now >= next_equity:
+                value, nav = ledger.step()
                 q.equity(value)
+                q.nav(nav)
                 equity_count += 1
-                print(f"[{label}] 账户权益 {ledger.name} {value:,.2f}")
+                print(f"[{label}] 策略权益 {strategy['name']} {value:,.2f} nav={nav:.6f}")
                 next_equity = now + rnd.uniform(20, 40)
             stop.wait(TICK_S)
     finally:
@@ -367,7 +372,7 @@ def _run_process(
 # ---------- 入口 ----------
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="qwatch v0.4 双账户三策略模拟器")
+    parser = argparse.ArgumentParser(description="qwatch v0.5 双账户三策略模拟器（策略级权益）")
     parser.add_argument("--duration", type=float, default=0.0, help="运行秒数，0 表示一直运行到 Ctrl+C（便于自测）")
     args = parser.parse_args()
 
@@ -383,8 +388,7 @@ def main() -> int:
         print(f"启动失败：{exc}")
         return 1
 
-    ledgers = {spec["name"]: AccountLedger(spec["name"], ACCOUNT_BASE_EQUITY[spec["name"]]) for spec in ACCOUNTS}
-    strategy_account = {spec["name"]: spec["account"] for spec in STRATEGIES}
+    ledgers = {spec["name"]: StrategyLedger(spec["name"], spec["base_equity"]) for spec in STRATEGIES}
     stop = threading.Event()
     tasks = [
         (spec, process)
@@ -394,7 +398,10 @@ def main() -> int:
     threads = [
         threading.Thread(
             target=_run_process,
-            args=(spec, process, url, tokens[spec["name"]], ledgers[strategy_account[spec["name"]]], stop),
+            args=(
+                spec, process, url, tokens[spec["name"]],
+                ledgers[spec["name"]] if process.get("report_equity") else None, stop,
+            ),
             name=f"sim-{spec['name']}-{process['instrument']}", daemon=True,
         )
         for spec, process in tasks
@@ -404,11 +411,18 @@ def main() -> int:
             thread.start()
         print(
             f"模拟已启动：{len(ACCOUNTS)} 个账户 / {len(STRATEGIES)} 个策略 / {len(tasks)} 个进程"
-            f"（心跳 {HEARTBEAT_S}s，tick {TICK_S}s）；Ctrl+C 退出。"
+            f"（策略级权益/净值，账户由后端求和；心跳 {HEARTBEAT_S}s，tick {TICK_S}s）；Ctrl+C 退出。"
         )
         for account in ACCOUNTS:
-            names = [spec["name"] for spec in STRATEGIES if spec["account"] == account["name"]]
-            print(f"  账户 {account['name']}：{'、'.join(names)}")
+            specs = [spec for spec in STRATEGIES if spec["account"] == account["name"]]
+            summary = "、".join(
+                spec["name"] + "（" + "、".join(process["instrument"] for process in spec["processes"]) + "）"
+                for spec in specs
+            )
+            print(f"  账户 {account['name']}：{summary}")
+        for spec in STRATEGIES:
+            primary = next(process["instrument"] for process in spec["processes"] if process.get("report_equity"))
+            print(f"  策略 {spec['name']}：{primary} 上报权益，基准 {spec['base_equity']:,.2f}")
         if args.duration > 0:
             stop.wait(args.duration)
             print(f"运行满 {args.duration:.0f}s，开始退出 ...")

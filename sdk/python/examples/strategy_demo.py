@@ -1,4 +1,4 @@
-"""最小示例：非阻塞主循环 + 心跳 + 动态 + 信号 + 账户权益（v0.4）。"""
+"""最小示例：非阻塞主循环 + 心跳 + 动态 + 信号 + 策略级权益/净值（v0.5）。"""
 
 import os
 import time
@@ -14,6 +14,7 @@ if not TOKEN:
     raise SystemExit("请先设置 QWATCH_TOKEN（在 qwatch 后台新建策略后复制）")
 
 # 构造和下面的调用都不会阻塞主线程；发送失败在后台重试。
+# equity/nav 写入本 token 所属策略；账户权益由后端对各策略求和。
 with Qwatch(URL, TOKEN, heartbeat=30, instrument=INSTRUMENT) as q:
     for i in range(1, 1000):
         q.tick()
@@ -22,6 +23,6 @@ with Qwatch(URL, TOKEN, heartbeat=30, instrument=INSTRUMENT) as q:
         if i % 60 == 0:
             q.msg("示例动态：主循环正常")
         if i % 120 == 0:
-            q.equity(1_000_000 + i * 10)
+            q.equity(1_200_000 + i * 10)
             q.nav(1.0 + i * 0.00001)
         time.sleep(2)

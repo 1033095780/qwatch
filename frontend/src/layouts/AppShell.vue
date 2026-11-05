@@ -1,11 +1,11 @@
-// AppShell.vue — v0.4 侧栏（总览/账户/策略/告警/设置）+ 顶栏（实时状态/刷新/告警/头像）+ 移动端抽屉。
+// AppShell.vue — v0.5 侧栏（总览/策略/告警/设置）+ 顶栏（实时状态/刷新/告警/头像）+ 移动端抽屉。
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { NDropdown, useMessage } from 'naive-ui';
 import {
-  Activity, Bell, Landmark, LayoutDashboard, Menu, PanelLeftClose, PanelLeftOpen,
+  Activity, Bell, LayoutDashboard, Menu, PanelLeftClose, PanelLeftOpen,
   RefreshCw, Settings as SettingsIcon,
 } from 'lucide-vue-next';
 import { api, apiMeta } from '@/api/client';
@@ -21,7 +21,6 @@ interface NavItem { to: string; label: string; icon: Component; badge?: boolean 
 
 const navItems: NavItem[] = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
-  { to: '/accounts', label: '账户', icon: Landmark },
   { to: '/strategies', label: '策略', icon: Activity },
   { to: '/alerts', label: '告警', icon: Bell, badge: true },
   { to: '/settings', label: '设置', icon: SettingsIcon },
@@ -156,10 +155,10 @@ onBeforeUnmount(() => {
       </nav>
       <div class="sidebar-foot">
         <template v-if="!collapsed">
-          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.4.0</span>
+          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.5.0</span>
           <span class="ver">qwatch · 可信看门狗</span>
         </template>
-        <span v-else class="ver">0.4</span>
+        <span v-else class="ver">0.5</span>
       </div>
     </aside>
     <div v-if="isMobile && drawerOpen" class="overlay" @click="drawerOpen = false" />
