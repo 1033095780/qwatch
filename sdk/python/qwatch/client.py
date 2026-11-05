@@ -1,4 +1,4 @@
-"""qwatch Python SDK v0.5 — 生产安全：构造和调用绝不阻塞策略主线程。
+"""qwatch Python SDK v0.6 — 生产安全：构造和调用绝不阻塞策略主线程。
 
 构造 Qwatch 只做本地参数校验并启动后台 daemon worker，不发起任何网络请求；
 tick / msg / signal / equity / nav 全部 O(1) 入队，绝不阻塞、绝不因发送失败抛异常。
@@ -217,9 +217,14 @@ class Qwatch:
         self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "equity": number})
 
     def nav(self, value: float) -> None:
-        """上报所属策略净值（v0.5 策略级 nav；账户净值由后端按权益加权）。"""
+        """上报所属策略净值（v0.6 策略级 nav；账户净值由后端按权益加权）。"""
         number = self._positive_number(value, "nav")
         self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "nav": number})
+
+    def account_nav(self, value: float) -> None:
+        """上报所属账户净值覆盖值（v0.6；账户未提交时后端自动用策略加权）。"""
+        number = self._positive_number(value, "account_nav")
+        self._enqueue({"ts": _now_iso(), "instrument": self._instrument, "account_nav": number})
 
     @property
     def stats(self) -> Dict[str, int]:
@@ -459,7 +464,7 @@ class Qwatch:
             headers={
                 "Authorization": "Bearer " + self._token,
                 "Content-Type": "application/json; charset=utf-8",
-                "User-Agent": "qwatch-python/0.5.0",
+                "User-Agent": "qwatch-python/0.6.0",
             },
             method="POST",
         )

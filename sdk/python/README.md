@@ -4,7 +4,7 @@
 统一走 `POST /api/v1/report`，本地按 instrument 分文件记录日志。
 
 v0.4 起 SDK 是**生产安全**的（构造和所有上报方法都不阻塞策略主线程，网络失败后台重试）；
-v0.5 起 `equity()` / `nav()` 写入**所属策略**，账户权益由后端对各策略求和、账户净值按权益加权。
+v0.6 起 `equity()` / `nav()` 写入**所属策略**，账户权益由后端对各策略求和、账户净值按权益加权。
 
 ## 安装
 
@@ -33,6 +33,7 @@ for i in range(1, 100000):
     if i % 120 == 0:
         q.equity(1_200_000 + i * 10)                 # 所属策略权益（账户由后端求和）
         q.nav(1.0 + i * 0.00001)                     # 所属策略净值
+        q.account_nav(1.01)                          # 可选：账户净值覆盖；不传自动策略加权
     time.sleep(10)
 
 q.close()
@@ -57,6 +58,7 @@ q.signal(contract, direction, action, qty,
          *, price=None, amount=None, msg=None, id=None) -> signal_id
 q.equity(value)                         # 所属策略权益，必须 > 0
 q.nav(value)                            # 所属策略净值，必须 > 0
+q.account_nav(value)                    # 账户净值覆盖值，可选；不传则自动按策略加权
 q.stats                                 # {"sent","failed","retried","dropped","queued"}
 q.last_error                            # 最近一次失败原因（网络/HTTP detail）
 q.auth_failed                           # token 被 401 拒绝后为 True（不影响调用方）
@@ -89,4 +91,4 @@ q.close(flush_timeout=2.0)              # 停止 worker 并在上限内尽力冲
 - token 无效（401）不再在构造时抛 AuthError；请观测 `last_error` / `auth_failed`。
 - 纯心跳也必须带 instrument（SDK 自动补齐）。
 - 信号字段：`contract + direction + action + qty` 必填，price/amount 可选且不能为负。
-- v0.5 后端按策略汇总：`equity` / `nav` 写入 token 对应策略，账户权益=账户下策略权益之和，账户净值=Σ(nav×equity)/Σ(equity)。
+- v0.6 后端按策略汇总：`equity` / `nav` 写入 token 对应策略，账户权益=账户下策略权益之和，账户净值=Σ(nav×equity)/Σ(equity)。

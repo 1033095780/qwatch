@@ -19,7 +19,7 @@ from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = Path(os.environ.get("QWATCH_DB", ROOT / "data" / "qwatch.db"))
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 logger = logging.getLogger("qwatch.db")
 
 V04_SCHEMA = """
@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   name TEXT NOT NULL,
   broker TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
+  nav_override REAL,
+  nav_override_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -759,8 +761,17 @@ def _upgrade_v02_to_v03(conn: sqlite3.Connection) -> None:
     _set_schema_version(conn, 3)
 
 
+def _ensure_account_nav_columns(conn: sqlite3.Connection) -> None:
+    """v0.6：账户手动 NAV 覆盖列。"""
+    columns = _columns(conn, "accounts")
+    if "nav_override" not in columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN nav_override REAL")
+    if "nav_override_at" not in columns:
+        conn.execute("ALTER TABLE accounts ADD COLUMN nav_override_at TEXT")
+
+
 def init_db() -> None:
-    """创建/迁移数据库；检测顺序保证 v0.5 库启动不会重复迁移。"""
+    """创建/迁移数据库；检测顺序保证已有库启动不会重复迁移。"""
     with connect() as conn:
         runner_columns = _columns(conn, "runners")
         account_columns = _columns(conn, "accounts")
@@ -773,6 +784,7 @@ def init_db() -> None:
         )
         if is_v5:
             _exec_script(conn, SCHEMA)
+            _ensure_account_nav_columns(conn)
             if _schema_version(conn) != SCHEMA_VERSION:
                 _set_schema_version(conn, SCHEMA_VERSION)
             return
@@ -800,4 +812,5 @@ def init_db() -> None:
             logger.exception("旧库迁移失败，已回滚，请先备份 data/qwatch.db")
             raise RuntimeError("旧库迁移失败，已回滚；请备份 data/qwatch.db 后重试") from exc
         _exec_script(conn, SCHEMA)
+        _ensure_account_nav_columns(conn)
         _set_schema_version(conn, SCHEMA_VERSION)

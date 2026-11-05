@@ -33,6 +33,9 @@ export interface Account {
   description?: string;
   equity?: string | null;
   nav?: string | null;
+  nav_source?: 'account' | 'strategies' | null;
+  computed_nav?: string | null;
+  nav_override_at?: string | null;
   equity_updated_at?: string | null;
   nav_updated_at?: string | null;
   created_at?: string | null;
@@ -44,7 +47,7 @@ export interface Account {
 
 export interface AccountCreateRequest {
   name: string;
-  broker: string;
+  broker?: string;
   description?: string;
 }
 

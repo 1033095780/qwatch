@@ -1,4 +1,4 @@
-// AppShell.vue — v0.5 侧栏（总览/策略/告警/设置）+ 顶栏（实时状态/刷新/告警/头像）+ 移动端抽屉。
+// AppShell.vue — v0.6 侧栏（总览/策略/告警/设置）+ 顶栏（实时状态/刷新/告警/头像）+ 移动端抽屉。
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Component } from 'vue';
@@ -155,7 +155,7 @@ onBeforeUnmount(() => {
       </nav>
       <div class="sidebar-foot">
         <template v-if="!collapsed">
-          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.5.0</span>
+          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.6.0</span>
           <span class="ver">qwatch · 可信看门狗</span>
         </template>
         <span v-else class="ver">0.5</span>

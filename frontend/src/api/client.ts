@@ -112,6 +112,9 @@ export const api = {
   createAccount(body: AccountCreateRequest) {
     return request<{ account: Account }>('/accounts', { method: 'POST', body: JSON.stringify(body) });
   },
+  account(id: string) {
+    return request<{ account: Account; strategies: Runner[] }>('/accounts/' + encodeURIComponent(id));
+  },
   /** 账户聚合权益曲线（v0.5，供总览账户选择） */
   async accountEquityCurve(id: string): Promise<CurvePoint[]> {
     const res = await request<CurvePoint[] | { items?: CurvePoint[] }>('/accounts/' + encodeURIComponent(id) + '/equity_curve');

@@ -30,6 +30,10 @@ const router = createRouter({
         { path: 'overview', name: 'overview', component: () => import('@/views/Overview.vue'), meta: { title: '总览' } },
         { path: 'strategies', name: 'strategies', component: () => import('@/views/Strategies.vue'), meta: { title: '策略' } },
         {
+          path: 'accounts/:id', name: 'account-detail', component: () => import('@/views/AccountDetail.vue'),
+          meta: { title: '账户详情', parent: { title: '策略', to: '/strategies' } },
+        },
+        {
           path: 'strategies/:id', name: 'strategy-detail', component: () => import('@/views/StrategyDetail.vue'),
           meta: { title: '策略详情', parent: { title: '策略', to: '/strategies' } },
         },
@@ -37,7 +41,6 @@ const router = createRouter({
         { path: 'settings', name: 'settings', component: () => import('@/views/Settings.vue'), meta: { title: '设置' } },
         // 已下线页面：保留重定向，避免旧书签 404
         { path: 'accounts', redirect: '/strategies' },
-        { path: 'accounts/:id', redirect: '/strategies' },
         { path: 'signals', redirect: '/overview' },
         { path: 'trades', redirect: '/overview' },
         { path: 'reports', redirect: '/overview' },

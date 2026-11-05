@@ -1,4 +1,4 @@
-"""qwatch v0.5 后端：策略级权益 + 账户聚合 + 可信看门狗。
+"""qwatch v0.6 后端：策略级权益 + 账户聚合 + 可信看门狗。
 
 - accounts = 账户（策略的自然分组，不存权益真相）；runners = 策略（必须归属账户）
 - processes = 策略下稳定进程（自动发现，可 retired）；token = 策略
@@ -36,7 +36,7 @@ from .db import DB_PATH, SCHEMA_VERSION, connect, dumps, get_setting, init_db, i
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "frontend" / "dist"
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 PASSWORD = os.environ.get("QWATCH_PASSWORD", "qwatch")
 SESSION_HOURS = 12
 HEARTBEAT_TIMEOUT_S = 60
@@ -324,13 +324,25 @@ def account_view(conn: sqlite3.Connection, row, strategy_views: list[dict[str, A
         )
         weighted_nav = numerator / total_equity
     updated_values = [item.get("equity_updated_at") for item in strategies if item.get("equity_updated_at")]
+    keys = set(row.keys())
+    override = row["nav_override"] if "nav_override" in keys else None
+    final_nav = float(override) if override is not None else weighted_nav
+    if override is not None:
+        nav_source = "account"
+    elif weighted_nav is not None:
+        nav_source = "strategies"
+    else:
+        nav_source = None
     return {
         "id": row["id"],
         "name": row["name"],
         "broker": row["broker"] or "",
         "description": row["description"] or "",
         "equity": _fmt_money(total_equity),
-        "nav": _fmt_nav(weighted_nav),
+        "nav": _fmt_nav(final_nav),
+        "nav_source": nav_source,
+        "computed_nav": _fmt_nav(weighted_nav),
+        "nav_override_at": row["nav_override_at"] if "nav_override_at" in keys else None,
         "equity_updated_at": max(updated_values) if updated_values else None,
         "strategy_count": len(strategies),
         "online_strategies": online,
@@ -648,8 +660,6 @@ def create_account(payload: dict[str, Any] = Body(default={}), user: str = Depen
     description = str(payload.get("description") or "").strip()[:300]
     if not name:
         raise HTTPException(status_code=400, detail="账户名称必填")
-    if not broker:
-        raise HTTPException(status_code=400, detail="券商必填")
     account_id = "account-" + uuid.uuid4().hex[:8]
     created = iso_now()
     with connect() as conn:
@@ -960,6 +970,11 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
         equity_value = require_number(payload["equity"], "equity")
         if equity_value <= 0:
             raise HTTPException(status_code=400, detail="equity 必须大于 0")
+    account_nav_value: float | None = None
+    if payload.get("account_nav") is not None:
+        account_nav_value = require_number(payload["account_nav"], "account_nav")
+        if account_nav_value <= 0:
+            raise HTTPException(status_code=400, detail="account_nav 必须大于 0")
     signal_keys = ("symbol", "contract", "direction", "action", "qty", "price", "amount")
     has_signal = any(key in payload and payload[key] not in (None, "") for key in signal_keys)
     signal_id = ""
@@ -1028,6 +1043,18 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                 "nav_updated_at": nav_at,
             })
             sse.publish({"type": "account.updated", "ts": now, "account_id": runner["account_id"]})
+        if account_nav_value is not None:
+            conn.execute(
+                "UPDATE accounts SET nav_override = ?, nav_override_at = ? WHERE id = ?",
+                (account_nav_value, now, runner["account_id"]),
+            )
+            sse.publish({
+                "type": "account.updated",
+                "ts": now,
+                "account_id": runner["account_id"],
+                "nav": _fmt_nav(account_nav_value),
+                "nav_source": "account",
+            })
         if msg and not has_signal:
             cursor = conn.execute(
                 "INSERT INTO events(runner_id, instrument, ts, type, text, created_at) VALUES(?,?,?,?,?,?)",

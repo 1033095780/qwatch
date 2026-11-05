@@ -172,10 +172,11 @@ onBeforeUnmount(() => {
 
     <div v-else class="account-groups">
       <section v-for="group in groups" :key="group.account.id" class="account-group">
-        <header class="account-header card">
+        <router-link :to="'/accounts/' + group.account.id" class="account-header card">
           <div class="account-identity">
-            <span v-if="group.account.broker && group.account.broker !== group.account.name" class="broker">{{ group.account.broker }}</span>
             <span class="account-name truncate" :title="group.account.name">{{ group.account.name }}</span>
+            <span v-if="group.account.broker && group.account.broker !== group.account.name" class="broker">{{ group.account.broker }}</span>
+            <span class="account-count"><strong class="mono">{{ group.runners.length }}</strong> 个策略 · <strong class="mono">{{ group.online }}</strong> 在线</span>
           </div>
           <div class="account-metrics">
             <div class="metric">
@@ -187,13 +188,11 @@ onBeforeUnmount(() => {
               <strong class="metric-value mono">{{ group.account.nav !== null && group.account.nav !== undefined && group.account.nav !== '' ? fmtNumber(group.account.nav, 4) : '—' }}</strong>
             </div>
             <div class="account-spark">
-              <NavSparkline v-if="group.account.equity_sparkline && group.account.equity_sparkline.length" :values="group.account.equity_sparkline" :width="180" :height="36" />
+              <NavSparkline v-if="group.account.equity_sparkline && group.account.equity_sparkline.length" :values="group.account.equity_sparkline" :width="260" :height="52" />
             </div>
-            <div class="account-count">
-              <strong class="mono">{{ group.runners.length }}</strong> 个策略 · <strong class="mono">{{ group.online }}</strong> 在线
-            </div>
+            <span class="account-open">查看账户 →</span>
           </div>
-        </header>
+        </router-link>
 
         <StrategyGrid v-if="group.runners.length">
           <GroupCard v-for="runner in group.runners" :key="runner.id" :runner="runner" />
@@ -225,16 +224,27 @@ onBeforeUnmount(() => {
 .skeleton-groups { display: flex; flex-direction: column; gap: var(--gap); }
 .account-groups { display: flex; flex-direction: column; gap: 18px; }
 .account-group { display: flex; flex-direction: column; gap: 12px; }
-.account-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 13px 18px; }
+.account-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 17px 20px;
+  color: inherit;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+.account-header:hover { border-color: var(--border-strong); background: rgba(91, 140, 255, 0.045); }
 .account-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .broker { flex: none; padding: 2px 7px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-2); font-size: 10px; }
-.account-name { font-size: 16px; font-weight: 600; color: #ffffff; }
-.account-metrics { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-.metric { display: flex; flex-direction: column; gap: 2px; }
+.account-name { font-size: 20px; font-weight: 650; color: #ffffff; letter-spacing: -0.02em; }
+.account-metrics { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; }
+.metric { display: flex; flex-direction: column; gap: 3px; }
 .metric-label { font-size: 10px; color: var(--text-3); }
-.metric-value { font-size: 19px; letter-spacing: -0.02em; color: #ffffff; white-space: nowrap; }
-.account-spark { width: 180px; max-width: 100%; opacity: 0.9; }
-.account-count { font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.metric-value { font-size: 21px; letter-spacing: -0.02em; color: #ffffff; white-space: nowrap; }
+.account-spark { width: 290px; max-width: 100%; opacity: 0.95; }
+.account-open { color: var(--primary); font-size: 11px; white-space: nowrap; }
+.account-count { font-size: 10px; color: var(--text-3); white-space: nowrap; margin-left: 4px; }
 .account-count .mono { color: var(--text); font-size: 12px; }
 .group-empty { padding: 14px 16px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-3); font-size: 11px; }
 @media (max-width: 899px) {
@@ -243,5 +253,6 @@ onBeforeUnmount(() => {
   .account-header { align-items: flex-start; }
   .account-metrics { width: 100%; gap: 16px; }
   .account-spark { width: 100%; order: 4; }
+  .account-open { display: none; }
 }
 </style>
