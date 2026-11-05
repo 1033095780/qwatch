@@ -55,6 +55,7 @@ function goDetail(): void {
     <footer class="card-foot">
       <div class="process-line">
         <span class="proc-meta">{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
+        <span v-if="runner.uptime_7d !== null && runner.uptime_7d !== undefined" class="uptime-meta">7d {{ fmtNumber(runner.uptime_7d, 2) }}%</span>
         <span v-if="runner.status === 'paused'" class="paused-label">已暂停监控</span>
       </div>
       <HeartbeatGrid stretch :status="runner.status" :last-seen="runner.last_seen" :history="runner.heartbeat_7d" class="card-heartbeat" />
@@ -99,6 +100,7 @@ function goDetail(): void {
 .card-foot { margin-top: 10px; }
 .process-line { display: flex; align-items: baseline; gap: 5px; margin-bottom: 7px; font-size: 10px; color: var(--text-3); }
 .proc-meta { color: var(--text-2); font-size: 10px; }
-.paused-label { margin-left: auto; color: #8b97ab; }
+.uptime-meta { margin-left: auto; color: var(--text-3); font: 9px var(--font-mono); }
+.paused-label { margin-left: 0; color: #8b97ab; }
 @media (max-width: 520px) { .equity-value { font-size: 20px; } }
 </style>

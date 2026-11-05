@@ -770,6 +770,46 @@ def _upgrade_v02_to_v03(conn: sqlite3.Connection) -> None:
     _set_schema_version(conn, 3)
 
 
+def _ensure_health_buckets(conn: sqlite3.Connection) -> None:
+    """6 小时心跳可用率桶：7 天 = 28 格。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS process_health_bucket ("
+        " process_id INTEGER NOT NULL, bucket_start TEXT NOT NULL,"
+        " up_samples INTEGER NOT NULL DEFAULT 0, total_samples INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY(process_id, bucket_start))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_process_health_bucket_start ON process_health_bucket(bucket_start)")
+
+
+def _ensure_daily_equity(conn: sqlite3.Connection) -> None:
+    """按日权益表：长期只保留每日最后一个点，避免原始点无限增长。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runner_daily_equity ("
+        " runner_id TEXT NOT NULL, day TEXT NOT NULL, equity REAL NOT NULL,"
+        " updated_at TEXT NOT NULL, PRIMARY KEY(runner_id, day))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_daily_equity_day ON runner_daily_equity(day)")
+    has_rows = conn.execute("SELECT 1 FROM runner_daily_equity LIMIT 1").fetchone()
+    if has_rows:
+        return
+    rows = conn.execute(
+        "SELECT runner_id, ts, equity FROM runner_equity_points WHERE equity IS NOT NULL ORDER BY id"
+    ).fetchall()
+    if not rows:
+        return
+    from datetime import datetime as _dt
+    for row in rows:
+        try:
+            day = _dt.fromisoformat(str(row["ts"]).replace("Z", "+00:00")).astimezone().date().isoformat()
+        except ValueError:
+            continue
+        conn.execute(
+            "INSERT INTO runner_daily_equity(runner_id, day, equity, updated_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(runner_id, day) DO UPDATE SET equity = excluded.equity, updated_at = excluded.updated_at",
+            (row["runner_id"], day, float(row["equity"]), row["ts"]),
+        )
+
+
 def _ensure_process_health(conn: sqlite3.Connection) -> None:
     """7 天可用率采样表（v0.6 增量）。"""
     conn.execute(
@@ -806,6 +846,8 @@ def init_db() -> None:
             _exec_script(conn, SCHEMA)
             _ensure_account_nav_columns(conn)
             _ensure_process_health(conn)
+            _ensure_health_buckets(conn)
+            _ensure_daily_equity(conn)
             if _schema_version(conn) != SCHEMA_VERSION:
                 _set_schema_version(conn, SCHEMA_VERSION)
             return
@@ -835,4 +877,6 @@ def init_db() -> None:
         _exec_script(conn, SCHEMA)
         _ensure_account_nav_columns(conn)
         _ensure_process_health(conn)
+        _ensure_health_buckets(conn)
+        _ensure_daily_equity(conn)
         _set_schema_version(conn, SCHEMA_VERSION)

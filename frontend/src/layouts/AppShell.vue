@@ -156,6 +156,7 @@ onBeforeUnmount(() => {
       <div class="sidebar-foot">
         <div class="side-brand-line">
           <span class="ver">v0.6.0</span>
+          <span class="ver-dot">·</span>
           <a class="ver-link" href="https://github.com/1033095780/qwatch" target="_blank" rel="noopener noreferrer">qwatch</a>
         </div>
       </div>

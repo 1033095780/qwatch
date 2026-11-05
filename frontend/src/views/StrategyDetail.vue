@@ -27,6 +27,14 @@ const settings = useSettingsStore();
 
 const detail = ref<RunnerDetail | null>(null);
 const dailyCurve = ref<CurvePoint[]>([]);
+const rangeKey = ref('all');
+const customStart = ref('');
+const customEnd = ref('');
+const rangeOptions = [
+  { value: 'all', label: '全部历史' }, { value: '1m', label: '近 1 个月' }, { value: '3m', label: '近 3 个月' },
+  { value: '6m', label: '近 6 个月' }, { value: '1y', label: '近 1 年' }, { value: '3y', label: '近 3 年' },
+  { value: '5y', label: '近 5 年' }, { value: 'custom', label: '自定义' },
+];
 const loading = ref(true);
 const error = ref('');
 const pauseBusy = ref(false);
@@ -56,7 +64,20 @@ const filteredEvents = computed<RunnerEvent[]>(() => {
       .some((value) => String(value).toLowerCase().includes(keyword));
   });
 });
-const equityCurve = computed<CurvePoint[]>(() => dailyCurve.value);
+const equityCurve = computed<CurvePoint[]>(() => {
+  const daily = dailyCurve.value;
+  if (!daily.length || rangeKey.value === 'all') return daily;
+  if (rangeKey.value === 'custom') {
+    const start = customStart.value ? Date.parse(customStart.value) : -Infinity;
+    const end = customEnd.value ? Date.parse(customEnd.value) + 86399000 : Infinity;
+    return daily.filter((point) => { const ts = Date.parse(point.ts); return ts >= start && ts <= end; });
+  }
+  const latest = Date.parse(daily[daily.length - 1].ts);
+  const months = ({ '1m': 1, '3m': 3, '6m': 6, '1y': 12, '3y': 36, '5y': 60 } as Record<string, number>)[rangeKey.value] || 0;
+  const cutoff = new Date(latest);
+  cutoff.setMonth(cutoff.getMonth() - months);
+  return daily.filter((point) => Date.parse(point.ts) >= cutoff.getTime());
+});
 
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
@@ -189,7 +210,17 @@ onBeforeUnmount(() => {
             <span class="meta-item">{{ runner.last_seen ? '最后心跳 ' + fromNow(runner.last_seen) : '尚未上报' }}</span>
           </div>
         </div>
-        <span class="chart-window">全部历史 · 日粒度</span>
+        <div class="detail-range">
+          <select v-model="rangeKey" class="range-select" aria-label="选择时间范围">
+            <option v-for="item in rangeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+          <template v-if="rangeKey === 'custom'">
+            <input v-model="customStart" type="date" class="date-input" aria-label="开始日期" />
+            <span class="date-sep">—</span>
+            <input v-model="customEnd" type="date" class="date-input" aria-label="结束日期" />
+          </template>
+          <span class="chart-window">日粒度</span>
+        </div>
       </section>
 
       <section class="card chart-card">
@@ -261,6 +292,10 @@ onBeforeUnmount(() => {
 .account-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 10px; }
 .account-link:hover { color: var(--primary); }
 .broker-chip { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.detail-range { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.range-select { height: 28px; padding: 0 22px 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 11px; }
+.date-input { height: 28px; padding: 0 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 10px; }
+.date-sep { color: var(--text-3); font-size: 10px; }
 .chart-window { color: var(--text-3); font-size: 10px; white-space: nowrap; }
 .detail-range { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .detail-range button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }

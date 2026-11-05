@@ -179,24 +179,20 @@ onBeforeUnmount(() => {
         <div class="ov-kpi">
           <div class="ov-kpi-top"><span class="ov-kpi-label">总权益</span><Wallet :size="15" /></div>
           <div class="ov-kpi-value">{{ summary.totalEquity !== null ? '¥' + fmtNumber(summary.totalEquity, 0) : '—' }}</div>
-          <div class="ov-kpi-foot">{{ summary.accountCount }} 个账户 · {{ summary.total }} 个策略</div>
         </div>
         <div class="ov-kpi">
           <div class="ov-kpi-top"><span class="ov-kpi-label">今日盈利额</span><TrendingUp :size="15" /></div>
           <div class="ov-kpi-value" :class="equityChange === null ? '' : equityChange >= 0 ? 'up' : 'down'">
             {{ equityChange === null ? '—' : (equityChange >= 0 ? '+' : '') + fmtNumber(equityChange, 0) }}
           </div>
-          <div class="ov-kpi-foot">按今日基线计算</div>
         </div>
         <div class="ov-kpi">
           <div class="ov-kpi-top"><span class="ov-kpi-label">策略在线</span><Activity :size="15" /></div>
           <div class="ov-kpi-value">{{ summary.running }}</div>
-          <div class="ov-kpi-foot">共 {{ summary.total }} 个策略</div>
         </div>
         <router-link to="/activity" class="ov-kpi link" :class="{ danger: summary.activeAlerts > 0 }">
           <div class="ov-kpi-top"><span class="ov-kpi-label">活跃告警</span><Bell :size="15" :class="{ danger: summary.activeAlerts > 0 }" /></div>
           <div class="ov-kpi-value" :class="{ danger: summary.activeAlerts > 0 }">{{ summary.activeAlerts }}</div>
-          <div class="ov-kpi-foot">{{ summary.activeAlerts > 0 ? '需要处理' : '全部正常' }}</div>
         </router-link>
       </div>
 

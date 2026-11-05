@@ -17,12 +17,14 @@ CHANNELS = [
 
 TABLES = [
     "runner_equity_points",
+    "runner_daily_equity",
     "accounts",
     "alert_deliveries",
     "alerts",
     "events",
     "processes",
     "process_day_health",
+    "process_health_bucket",
     "runners",
     "tokens",
     "sessions",

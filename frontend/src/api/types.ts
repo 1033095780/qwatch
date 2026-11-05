@@ -48,8 +48,9 @@ export interface AccountCreateRequest {
 }
 
 /** GET /runners 列表项（策略组；含策略级权益与所属账户信息） */
-export interface HeartbeatDay {
-  date: string;
+export interface HeartbeatBucket {
+  start: string;
+  end: string;
   ratio: number | null;
 }
 
@@ -70,7 +71,8 @@ export interface Runner {
   today_pnl?: string | null;
   equity_updated_at?: string | null;
   equity_sparkline?: number[];
-  heartbeat_7d?: HeartbeatDay[];
+  heartbeat_7d?: HeartbeatBucket[];
+  uptime_7d?: number | null;
   created_at?: string | null;
 }
 
@@ -80,7 +82,7 @@ export interface ProcessInfo {
   last_seen: string | null;
   loop: number | null;
   retired: boolean;
-  heartbeat_7d?: HeartbeatDay[];
+  heartbeat_7d?: HeartbeatBucket[];
 }
 
 export interface RunnerEvent {

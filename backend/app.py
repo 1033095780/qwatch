@@ -294,20 +294,17 @@ def account_equity_curve(conn: sqlite3.Connection, account_id: str, limit: int =
 
 
 def daily_equity_curve(conn: sqlite3.Connection, runner_ids: list[str]) -> list[dict[str, str]]:
-    """全部历史按自然日取每个策略最后权益，再按日求和。"""
+    """从日权益表读取长期曲线，按日求和；不再扫全量原始点。"""
+    if not runner_ids:
+        return []
+    placeholders = ",".join("?" for _ in runner_ids)
+    rows = conn.execute(
+        "SELECT runner_id, day, equity FROM runner_daily_equity WHERE runner_id IN (" + placeholders + ") ORDER BY day",
+        runner_ids,
+    ).fetchall()
     per: dict[str, dict[str, float]] = {}
-    for runner_id in runner_ids:
-        rows = conn.execute(
-            "SELECT ts, equity FROM runner_equity_points WHERE runner_id = ? AND equity IS NOT NULL ORDER BY id",
-            (runner_id,),
-        ).fetchall()
-        by_day: dict[str, float] = {}
-        for row in rows:
-            dt = dt_from(row["ts"])
-            if dt is not None:
-                by_day[dt.astimezone().date().isoformat()] = float(row["equity"])
-        if by_day:
-            per[runner_id] = by_day
+    for row in rows:
+        per.setdefault(row["runner_id"], {})[row["day"]] = float(row["equity"])
     if not per:
         return []
     days = sorted({day for values in per.values() for day in values})
@@ -361,52 +358,75 @@ def _daily_last_values(rows) -> dict[str, float]:
 
 
 def strategy_equity_sparkline(conn: sqlite3.Connection, runner_id: str) -> list[float]:
-    """最近 7 天，每个自然日取最后一个权益点。"""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
+    """最近 7 天日权益。"""
     rows = conn.execute(
-        "SELECT ts, equity AS value FROM runner_equity_points "
-        "WHERE runner_id = ? AND equity IS NOT NULL AND ts >= ? ORDER BY id",
-        (runner_id, cutoff),
+        "SELECT day, equity FROM runner_daily_equity WHERE runner_id = ? ORDER BY day DESC LIMIT 7",
+        (runner_id,),
     ).fetchall()
-    allowed = set(_last_seven_days())
-    by_day = {day: value for day, value in _daily_last_values(rows).items() if day in allowed}
-    return [round(by_day[day], 2) for day in sorted(by_day)]
+    return [round(float(row["equity"]), 2) for row in reversed(rows)]
+
+
+def _health_bucket_starts() -> list[tuple[str, str]]:
+    """28 个 6 小时桶，覆盖最近 7 天。"""
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    current = now.replace(hour=(now.hour // 6) * 6)
+    buckets = []
+    for offset in range(27, -1, -1):
+        start = current - timedelta(hours=6 * offset)
+        buckets.append((
+            start.isoformat().replace("+00:00", "Z"),
+            (start + timedelta(hours=6)).isoformat().replace("+00:00", "Z"),
+        ))
+    return buckets
+
+
+def _health_stats(conn: sqlite3.Connection, process_ids: list[int]) -> tuple[list[dict[str, Any]], float | None]:
+    if not process_ids:
+        return [], None
+    starts = _health_bucket_starts()
+    placeholders = ",".join("?" for _ in process_ids)
+    rows = conn.execute(
+        "SELECT bucket_start, SUM(up_samples) AS up, SUM(total_samples) AS total "
+        "FROM process_health_bucket WHERE process_id IN (" + placeholders + ") AND bucket_start >= ? "
+        "GROUP BY bucket_start",
+        [*process_ids, starts[0][0]],
+    ).fetchall()
+    by_bucket = {row["bucket_start"]: (int(row["up"] or 0), int(row["total"] or 0)) for row in rows}
+    buckets = []
+    total_up = total_samples = 0
+    for start, end in starts:
+        up, total = by_bucket.get(start, (0, 0))
+        total_up += up
+        total_samples += total
+        buckets.append({"start": start, "end": end, "ratio": round(up / total, 4) if total else None})
+    uptime = round(total_up / total_samples * 100, 2) if total_samples else None
+    return buckets, uptime
 
 
 def process_heartbeat_history(conn: sqlite3.Connection, process_id: int) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        "SELECT day, up_samples, total_samples FROM process_day_health WHERE process_id = ?", (process_id,)
-    ).fetchall()
-    by_day = {row["day"]: (int(row["up_samples"] or 0), int(row["total_samples"] or 0)) for row in rows}
-    result = []
-    for day in _last_seven_days():
-        up, total = by_day.get(day, (0, 0))
-        result.append({"date": day, "ratio": round(up / total, 4) if total else None})
-    return result
+    return _health_stats(conn, [process_id])[0]
 
 
 def runner_heartbeat_history(conn: sqlite3.Connection, runner_id: str) -> list[dict[str, Any]]:
-    """最近 7 天每个自然日的进程存活采样比例。"""
-    rows = conn.execute(
-        "SELECT h.day, SUM(h.up_samples) AS up, SUM(h.total_samples) AS total "
-        "FROM process_day_health h JOIN processes p ON p.id = h.process_id "
-        "WHERE p.runner_id = ? AND p.retired = 0 GROUP BY h.day",
-        (runner_id,),
-    ).fetchall()
-    by_day = {row["day"]: (int(row["up"] or 0), int(row["total"] or 0)) for row in rows}
-    result = []
-    for day in _last_seven_days():
-        up, total = by_day.get(day, (0, 0))
-        result.append({"date": day, "ratio": round(up / total, 4) if total else None})
-    return result
+    process_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM processes WHERE runner_id = ? AND retired = 0", (runner_id,)
+    )]
+    return _health_stats(conn, process_ids)[0]
+
+
+def runner_uptime_7d(conn: sqlite3.Connection, runner_id: str) -> float | None:
+    process_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM processes WHERE runner_id = ? AND retired = 0", (runner_id,)
+    )]
+    return _health_stats(conn, process_ids)[1]
 
 
 def account_equity_sparkline(conn: sqlite3.Connection, account_id: str) -> list[float]:
-    curve = account_equity_curve(conn, account_id, 5000)
-    rows = [{"ts": point["ts"], "value": point["value"]} for point in curve]
-    allowed = set(_last_seven_days())
-    by_day = {day: value for day, value in _daily_last_values(rows).items() if day in allowed}
-    return [round(by_day[day], 2) for day in sorted(by_day)]
+    runner_ids = [row["id"] for row in conn.execute(
+        "SELECT id FROM runners WHERE account_id = ? ORDER BY created_at", (account_id,)
+    )]
+    curve = daily_equity_curve(conn, runner_ids)
+    return [round(float(point["value"]), 2) for point in curve[-7:]]
 
 
 def account_view(conn: sqlite3.Connection, row, strategy_views: list[dict[str, Any]] | None = None,
@@ -444,6 +464,7 @@ def _runner_views(conn: sqlite3.Connection, runner_rows, processes_by_runner, ac
         view = runner_view(runner, rows, statuses, account)
         view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
         view["heartbeat_7d"] = runner_heartbeat_history(conn, runner["id"])
+        view["uptime_7d"] = runner_uptime_7d(conn, runner["id"])
         view["today_pnl"] = _fmt_money(runner_today_pnl(conn, runner, today_start))
         grouped[runner["account_id"] if "account_id" in runner.keys() else ""].append(view)
     return grouped
@@ -723,6 +744,7 @@ def _account_strategy_views(conn, account_id: str) -> list[dict[str, Any]]:
         view = runner_view(runner, rows, statuses, account)
         view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
         view["heartbeat_7d"] = runner_heartbeat_history(conn, runner["id"])
+        view["uptime_7d"] = runner_uptime_7d(conn, runner["id"])
         view["today_pnl"] = _fmt_money(runner_today_pnl(conn, runner, today_start))
         views.append(view)
     return views
@@ -890,6 +912,7 @@ def list_runners(
             view = runner_view(runner, rows, statuses, accounts_by_id.get(runner["account_id"]))
             view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
             view["heartbeat_7d"] = runner_heartbeat_history(conn, runner["id"])
+            view["uptime_7d"] = runner_uptime_7d(conn, runner["id"])
             view["today_pnl"] = _fmt_money(runner_today_pnl(conn, runner, _today_start_iso()))
             items.append(view)
     if status:
@@ -919,6 +942,7 @@ def runner_detail(runner_id: str, user: str = Depends(require_user)) -> dict[str
         runner_data = runner_view(runner, processes, statuses, account)
         runner_data["equity_sparkline"] = strategy_equity_sparkline(conn, runner_id)
         runner_data["heartbeat_7d"] = runner_heartbeat_history(conn, runner_id)
+        runner_data["uptime_7d"] = runner_uptime_7d(conn, runner_id)
         runner_data["today_pnl"] = _fmt_money(runner_today_pnl(conn, runner, _today_start_iso()))
         return {
             "runner": runner_data,
@@ -1117,6 +1141,12 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
                 "INSERT INTO runner_equity_points(runner_id, ts, equity, nav, created_at) VALUES(?,?,?,NULL,?)",
                 (runner["id"], now, equity_value, now),
             )
+            day = datetime.now().astimezone().date().isoformat()
+            conn.execute(
+                "INSERT INTO runner_daily_equity(runner_id, day, equity, updated_at) VALUES(?,?,?,?) "
+                "ON CONFLICT(runner_id, day) DO UPDATE SET equity = excluded.equity, updated_at = excluded.updated_at",
+                (runner["id"], day, equity_value, now),
+            )
             sse.publish({
                 "type": "strategy.equity_updated",
                 "ts": now,
@@ -1167,6 +1197,7 @@ def overview(user: str = Depends(require_user)) -> dict[str, Any]:
             view = runner_view(runner, rows, statuses, accounts_by_id.get(runner["account_id"]))
             view["equity_sparkline"] = strategy_equity_sparkline(conn, runner["id"])
             view["heartbeat_7d"] = runner_heartbeat_history(conn, runner["id"])
+            view["uptime_7d"] = runner_uptime_7d(conn, runner["id"])
             view["today_pnl"] = _fmt_money(runner_today_pnl(conn, runner, _today_start_iso()))
             runner_views_list.append(view)
             grouped[runner["account_id"]].append(view)
@@ -1528,10 +1559,11 @@ async def stream(
 # ---------- 后台任务 ----------
 
 _started_monotonic = 0.0
+_last_maintenance = 0.0
 
 
 async def watchdog_loop() -> None:
-    global _started_monotonic
+    global _started_monotonic, _last_maintenance
     _started_monotonic = time.monotonic()
     while True:
         try:
@@ -1545,6 +1577,10 @@ async def watchdog_loop() -> None:
                 # 7 天可用率采样：每 5 秒记录一次进程在线/总数，供心跳条展示
                 day = datetime.now().astimezone().date().isoformat()
                 now = now_dt()
+                utc_now = datetime.now(timezone.utc)
+                bucket_start = utc_now.replace(
+                    hour=(utc_now.hour // 6) * 6, minute=0, second=0, microsecond=0
+                ).isoformat().replace("+00:00", "Z")
                 processes = conn.execute(
                     "SELECT p.* FROM processes p JOIN runners r ON r.id = p.runner_id "
                     "WHERE p.retired = 0 AND r.paused = 0"
@@ -1558,6 +1594,23 @@ async def watchdog_loop() -> None:
                         "total_samples = total_samples + 1",
                         (process["id"], day, up),
                     )
+                    conn.execute(
+                        "INSERT INTO process_health_bucket(process_id, bucket_start, up_samples, total_samples) "
+                        "VALUES(?,?,?,1) ON CONFLICT(process_id, bucket_start) DO UPDATE SET "
+                        "up_samples = up_samples + excluded.up_samples, "
+                        "total_samples = total_samples + 1",
+                        (process["id"], bucket_start, up),
+                    )
+                if time.monotonic() - _last_maintenance > 3600:
+                    _last_maintenance = time.monotonic()
+                    raw_cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+                    health_cutoff = (datetime.now().astimezone().date() - timedelta(days=30)).isoformat()
+                    bucket_cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+                    event_cutoff = (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()
+                    conn.execute("DELETE FROM runner_equity_points WHERE ts < ?", (raw_cutoff,))
+                    conn.execute("DELETE FROM process_day_health WHERE day < ?", (health_cutoff,))
+                    conn.execute("DELETE FROM process_health_bucket WHERE bucket_start < ?", (bucket_cutoff,))
+                    conn.execute("DELETE FROM events WHERE ts < ?", (event_cutoff,))
         except Exception:  # noqa: BLE001 - 后台循环不能退出
             logger.exception("watchdog 扫描失败")
         await asyncio.sleep(WATCHDOG_INTERVAL_S)

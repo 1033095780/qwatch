@@ -24,7 +24,6 @@ const emit = defineEmits<{ retire: [name: string]; activate: [name: string] }>()
           <th>状态</th>
           <th>心跳</th>
           <th>最后心跳</th>
-          <th class="th-num">loop</th>
           <th v-if="actionable" class="th-actions">操作</th>
         </tr>
       </thead>
@@ -34,7 +33,6 @@ const emit = defineEmits<{ retire: [name: string]; activate: [name: string] }>()
           <td><StatusTag :status="p.retired ? 'retired' : p.status" compact /></td>
           <td class="hb-cell"><HeartbeatGrid :status="p.status" :retired="p.retired" :last-seen="p.last_seen" :history="p.heartbeat_7d" /></td>
           <td class="muted nowrap" :title="p.last_seen || ''">{{ p.last_seen ? fromNow(p.last_seen) : '从未上报' }}</td>
-          <td class="td-num mono">{{ p.loop === null || p.loop === undefined ? '—' : p.loop }}</td>
           <td v-if="actionable" class="td-actions">
             <n-button v-if="!p.retired" size="tiny" quaternary :loading="busy === p.name" @click="emit('retire', p.name)">停用</n-button>
             <n-button v-else size="tiny" quaternary :loading="busy === p.name" @click="emit('activate', p.name)">恢复</n-button>
