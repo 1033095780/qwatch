@@ -370,7 +370,7 @@ def strategy_equity_sparkline(conn: sqlite3.Connection, runner_id: str) -> list[
     ).fetchall()
     allowed = set(_last_seven_days())
     by_day = {day: value for day, value in _daily_last_values(rows).items() if day in allowed}
-    return [round(value, 2) for value in by_day.values()]
+    return [round(by_day[day], 2) for day in sorted(by_day)]
 
 
 def process_heartbeat_history(conn: sqlite3.Connection, process_id: int) -> list[dict[str, Any]]:
@@ -406,7 +406,7 @@ def account_equity_sparkline(conn: sqlite3.Connection, account_id: str) -> list[
     rows = [{"ts": point["ts"], "value": point["value"]} for point in curve]
     allowed = set(_last_seven_days())
     by_day = {day: value for day, value in _daily_last_values(rows).items() if day in allowed}
-    return [round(value, 2) for value in by_day.values()]
+    return [round(by_day[day], 2) for day in sorted(by_day)]
 
 
 def account_view(conn: sqlite3.Connection, row, strategy_views: list[dict[str, Any]] | None = None,

@@ -28,15 +28,26 @@ function dayTitle(day: HeartbeatDay): string {
   if (day.ratio === null) return day.date + ' 暂无采样';
   return day.date + ' 可用率 ' + (day.ratio * 100).toFixed(2) + '%';
 }
-function dayColor(day: HeartbeatDay): string {
-  if (day.ratio === null) return '#3a465c';
-  return 'hsl(' + Math.round(day.ratio * 120) + ', 62%, 46%)';
+function dayTone(day: HeartbeatDay): string {
+  if (day.ratio === null) return 'off';
+  if (day.ratio >= 0.995) return 'ok';
+  if (day.ratio >= 0.98) return 'warn';
+  return 'bad';
 }
+/** 把 7 天数据映射到 24 格，保留原来的 24 格心跳视觉。 */
+const dayCells = computed(() => {
+  if (!props.history.length) return [];
+  const weights = props.history.length === 7 ? [4, 4, 4, 3, 3, 3, 3] : props.history.map(() => 24 / props.history.length);
+  return props.history.flatMap((day, index) => {
+    const count = Math.max(1, Math.round(weights[index] || 1));
+    return Array.from({ length: count }, () => day);
+  }).slice(0, 24);
+});
 </script>
 
 <template>
-  <div v-if="history.length" class="hb-grid hb-days" :class="{ stretch }" role="img" aria-label="最近 7 天可用率">
-    <span v-for="day in history" :key="day.date" class="hb-day" :style="{ background: dayColor(day) }" :title="dayTitle(day)" />
+  <div v-if="history.length" class="hb-grid" :class="{ stretch }" role="img" aria-label="最近 7 天可用率">
+    <span v-for="(day, index) in dayCells" :key="day.date + '-' + index" class="hb-cell" :class="dayTone(day)" :title="dayTitle(day)" />
   </div>
   <div v-else class="hb-grid" :class="{ stretch }" :title="lastSeen ? '最后心跳 ' + lastSeen : '暂无心跳'" role="img" aria-label="心跳状态">
     <span v-for="(tone, i) in bars" :key="i" class="hb-cell" :class="tone" />
@@ -67,7 +78,6 @@ function dayColor(day: HeartbeatDay): string {
   width: auto;
   height: 9px;
 }
-.hb-days .hb-day { flex: 1; width: auto; height: 10px; border-radius: 2px; min-width: 4px; }
 .hb-cell.ok { background: #2ecc8f; }
 .hb-cell.warn { background: #f5a524; }
 .hb-cell.bad { background: #f04438; }
