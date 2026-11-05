@@ -1,15 +1,18 @@
 <script setup lang="ts">
 // NavChart.vue — 权益曲线：面积渐变 + 悬停十字线/提示，支持周期筛选后的数据。
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { fmtDateTime, fmtNumber } from '@/utils/format';
 
 const props = withDefaults(defineProps<{
   data: { ts: string; value: string }[];
   height?: number;
   currency?: boolean;
-}>(), { height: 200, currency: true });
+  fill?: boolean;
+}>(), { height: 200, currency: true, fill: false });
 
 const wrap = ref<HTMLElement | null>(null);
+const renderHeight = ref(props.height);
+let resizeObserver: ResizeObserver | undefined;
 const hoverIndex = ref<number | null>(null);
 const hoverLeft = ref(0);
 const hoverTop = ref(0);
@@ -28,7 +31,7 @@ const coords = computed(() => {
   const n = values.value.length;
   if (!n) return [] as { x: number; y: number; value: number; ts: string }[];
   const plotW = W - PAD_X * 2;
-  const plotH = props.height - PAD_Y * 2;
+  const plotH = renderHeight.value - PAD_Y * 2;
   return values.value.map((value, index) => {
     const x = n === 1 ? W / 2 : PAD_X + (index / (n - 1)) * plotW;
     const y = PAD_Y + (1 - (value - min.value) / span.value) * plotH;
@@ -39,7 +42,7 @@ const line = computed(() => coords.value.map((p, i) => (i ? 'L' : 'M') + p.x.toF
 const area = computed(() => {
   if (!coords.value.length) return '';
   const last = coords.value[coords.value.length - 1];
-  return line.value + ' L' + last.x.toFixed(1) + ' ' + (props.height - PAD_Y) + ' L' + coords.value[0].x.toFixed(1) + ' ' + (props.height - PAD_Y) + ' Z';
+  return line.value + ' L' + last.x.toFixed(1) + ' ' + (renderHeight.value - PAD_Y) + ' L' + coords.value[0].x.toFixed(1) + ' ' + (renderHeight.value - PAD_Y) + ' Z';
 });
 const hover = computed(() => (hoverIndex.value === null ? null : coords.value[hoverIndex.value] || null));
 const startLabel = computed(() => props.data.length ? fmtDateTime(props.data[0].ts) : '');
@@ -53,24 +56,33 @@ function onMove(event: MouseEvent): void {
   const index = Math.round(ratio * (coords.value.length - 1));
   hoverIndex.value = index;
   hoverLeft.value = ratio * 100;
-  hoverTop.value = (coords.value[index].y / props.height) * 100;
+  hoverTop.value = (coords.value[index].y / renderHeight.value) * 100;
 }
 function onLeave(): void { hoverIndex.value = null; }
+onMounted(() => {
+  if (!props.fill || !wrap.value) return;
+  resizeObserver = new ResizeObserver((entries) => {
+    const next = Math.round(entries[0]?.contentRect.height || 0);
+    if (next > 40) renderHeight.value = next;
+  });
+  resizeObserver.observe(wrap.value);
+});
+onBeforeUnmount(() => { resizeObserver?.disconnect(); });
 </script>
 
 <template>
-  <div ref="wrap" class="nav-chart" :style="{ height: height + 'px' }">
-    <svg v-if="coords.length" :viewBox="'0 0 ' + W + ' ' + height" preserveAspectRatio="none" role="img" aria-label="权益曲线" @mousemove="onMove" @mouseleave="onLeave">
+  <div ref="wrap" class="nav-chart" :style="{ height: (props.fill ? '100%' : renderHeight + 'px') }">
+    <svg v-if="coords.length" :viewBox="'0 0 ' + W + ' ' + renderHeight" preserveAspectRatio="none" role="img" aria-label="权益曲线" @mousemove="onMove" @mouseleave="onLeave">
       <defs>
         <linearGradient id="navArea" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="#6f9bff" stop-opacity="0.24" />
           <stop offset="100%" stop-color="#6f9bff" stop-opacity="0" />
         </linearGradient>
       </defs>
-      <line v-for="i in 4" :key="i" :x1="PAD_X" :x2="W - PAD_X" :y1="PAD_Y + (i - 1) * (height - PAD_Y * 2) / 3" :y2="PAD_Y + (i - 1) * (height - PAD_Y * 2) / 3" class="grid" />
+      <line v-for="i in 4" :key="i" :x1="PAD_X" :x2="W - PAD_X" :y1="PAD_Y + (i - 1) * (renderHeight - PAD_Y * 2) / 3" :y2="PAD_Y + (i - 1) * (renderHeight - PAD_Y * 2) / 3" class="grid" />
       <path :d="area" fill="url(#navArea)" />
       <path :d="line" class="curve" />
-      <line v-if="hover" :x1="hover.x" :x2="hover.x" :y1="PAD_Y" :y2="height - PAD_Y" class="crosshair" />
+      <line v-if="hover" :x1="hover.x" :x2="hover.x" :y1="PAD_Y" :y2="renderHeight - PAD_Y" class="crosshair" />
       <circle v-if="hover" :cx="hover.x" :cy="hover.y" r="3.5" class="hover-dot" />
       <circle v-else-if="coords.length" :cx="coords[coords.length - 1].x" :cy="coords[coords.length - 1].y" r="2.5" class="last-dot" />
     </svg>

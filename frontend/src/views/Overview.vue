@@ -12,11 +12,13 @@ import { fmtNumber, fromNow } from '@/utils/format';
 import { ruleLabel } from '@/utils/catalog';
 import ActivityFeed from '@/components/ActivityFeed.vue';
 import EmptyState from '@/components/EmptyState.vue';
-import GroupCard from '@/components/GroupCard.vue';
+import HeartbeatGrid from '@/components/HeartbeatGrid.vue';
 import NavChart from '@/components/NavChart.vue';
+import NavSparkline from '@/components/NavSparkline.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import SectionCard from '@/components/SectionCard.vue';
 import StatusDot from '@/components/StatusDot.vue';
+import StatusTag from '@/components/StatusTag.vue';
 
 const settings = useSettingsStore();
 const realtime = useRealtimeStore();
@@ -157,7 +159,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="page">
+  <div class="page overview-page">
     <PageHeader title="总览" />
 
     <div v-if="loading && !data" class="skeleton-page">
@@ -216,20 +218,36 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <div class="chart-wrap" :class="{ dimmed: curveLoading }">
-            <NavChart :data="equityCurve" :height="500" />
+            <NavChart :data="equityCurve" fill />
           </div>
         </SectionCard>
 
         <SectionCard title="策略状态">
           <template #extra><router-link to="/strategies" class="link-more">全部策略 <ChevronRight :size="13" /></router-link></template>
-          <div v-if="sortedRunners.length" class="strategy-column">
-            <GroupCard v-for="runner in sortedRunners" :key="runner.id" :runner="runner" />
+          <div v-if="sortedRunners.length" class="ov-status-list">
+            <router-link v-for="runner in sortedRunners" :key="runner.id" :to="'/strategies/' + runner.id" class="ov-status-row">
+              <div class="ov-row-top">
+                <StatusDot :status="runner.status" :size="7" :pulse="runner.status === 'running'" />
+                <strong class="ov-row-name">{{ runner.name }}</strong>
+                <StatusTag :status="runner.status" compact />
+                <span class="ov-row-account">{{ runner.account_name }}</span>
+              </div>
+              <div class="ov-row-main">
+                <div class="ov-row-value"><span>策略权益</span><strong class="mono">{{ runner.equity !== null && runner.equity !== undefined ? '¥' + fmtNumber(runner.equity, 0) : '—' }}</strong></div>
+                <span class="ov-row-today" :class="Number(runner.today_pnl) >= 0 ? 'up' : 'down'">今日 {{ runner.today_pnl !== null && runner.today_pnl !== undefined ? (Number(runner.today_pnl) >= 0 ? '+' : '') + fmtNumber(runner.today_pnl, 0) : '—' }}</span>
+                <NavSparkline v-if="runner.equity_sparkline?.length" class="spark" :values="runner.equity_sparkline" :width="96" :height="28" />
+              </div>
+              <div class="ov-row-foot">
+                <span>{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
+                <HeartbeatGrid stretch :status="runner.status" :last-seen="runner.last_seen" />
+              </div>
+            </router-link>
           </div>
           <EmptyState v-else compact title="还没有策略" description="前往「策略」页新建策略并生成接入令牌。" />
         </SectionCard>
       </div>
 
-      <div class="grid grid-2">
+      <div class="overview-bottom">
         <SectionCard title="动态">
           <template #extra><span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span></template>
           <div class="activity-scroll">
@@ -253,6 +271,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.overview-page { height: 100%; min-height: 0; overflow: hidden; }
+.overview-page > .summary-grid { flex: none; }
 .skeleton-page { display: flex; flex-direction: column; gap: var(--gap); }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
 .ov-kpi { display: flex; flex-direction: column; align-items: flex-start; min-height: 104px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: linear-gradient(145deg, rgba(29, 38, 58, 0.7), rgba(17, 23, 36, 0.7)); color: inherit; }
@@ -264,8 +284,28 @@ onBeforeUnmount(() => {
 .ov-kpi-value.danger, .danger { color: var(--danger); }
 .ov-kpi-foot { margin-top: auto; padding-top: 6px; color: #cbd5e5; font-size: 10px; }
 .ov-kpi.link:hover { border-color: var(--border-strong); }
-.overview-main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: stretch; }
-.overview-main > :deep(.section-card) { height: 100%; }
+.overview-main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(340px, 1fr); gap: var(--gap); align-items: stretch; }
+.overview-main > :deep(.section-card) { height: 100%; min-height: 0; }
+.overview-main :deep(.panel-head) { flex: none; }
+.chart-wrap { flex: 1; min-height: 0; display: flex; }
+.chart-wrap :deep(.nav-chart) { height: 100% !important; }
+.overview-main .strategy-column { flex: 1; min-height: 0; max-height: none; }
+.ov-status-list { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.ov-status-row { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: rgba(21, 28, 44, 0.38); color: inherit; transition: border-color 150ms ease, background-color 150ms ease; }
+.ov-status-row:hover { border-color: var(--border-strong); background: rgba(26, 35, 54, 0.7); }
+.ov-row-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ov-row-name { min-width: 0; color: #fff; font-size: 13px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ov-row-account { margin-left: auto; max-width: 110px; color: var(--text-3); font-size: 9px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ov-row-main { display: flex; align-items: flex-end; gap: 10px; min-width: 0; }
+.ov-row-value { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ov-row-value span { color: var(--text-3); font-size: 9px; }
+.ov-row-value strong { color: #fff; font: 600 21px/1.1 var(--font-mono); letter-spacing: -0.03em; white-space: nowrap; }
+.ov-row-today { padding-bottom: 2px; font: 10px var(--font-mono); white-space: nowrap; }
+.ov-row-main .spark { margin-left: auto; width: 96px; flex: none; opacity: 0.9; }
+.ov-row-foot { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--text-3); font: 9px var(--font-mono); }
+.ov-row-foot .hb-grid { flex: 1; min-width: 0; }
+.up { color: var(--up) !important; }
+.down { color: var(--down) !important; }
 .chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chart-select { height: 27px; min-width: 150px; max-width: 220px; padding: 0 24px 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 11px; outline: none; cursor: pointer; }
 .range-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
@@ -283,6 +323,10 @@ onBeforeUnmount(() => {
 .activity-scroll::-webkit-scrollbar-track { background: transparent; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
+.overview-bottom { flex: none; height: 230px; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: var(--gap); }
+.overview-bottom > :deep(.section-card) { height: 100%; min-height: 0; }
+.overview-bottom .activity-scroll { flex: 1; min-height: 0; max-height: none; }
+.overview-bottom .alert-feed { flex: 1; min-height: 0; overflow-y: auto; }
 .alert-feed { display: flex; flex-direction: column; }
 .alert-item { display: flex; align-items: flex-start; gap: 9px; padding: 9px 0; border-bottom: 1px solid var(--border); color: inherit; }
 .alert-item:last-child { border-bottom: 0; }
@@ -293,9 +337,16 @@ onBeforeUnmount(() => {
 .alert-status { font-size: 9px; color: var(--text-3); white-space: nowrap; }
 .link-more { display: inline-flex; align-items: center; gap: 1px; color: var(--text-3); font-size: 10px; }
 .link-more:hover { color: var(--text-2); }
+@media (max-height: 760px) {
+  .overview-page { height: auto; overflow: visible; }
+  .overview-main { min-height: 460px; flex: none; }
+  .overview-bottom { height: 240px; }
+}
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .overview-main { grid-template-columns: minmax(0, 1fr); }
+  .overview-page { height: auto; overflow: visible; }
+  .overview-main { flex: none; min-height: 520px; grid-template-columns: minmax(0, 1fr); }
+  .overview-bottom { height: 260px; }
   .overview-main > :deep(.section-card) { height: auto; }
   .strategy-column { max-height: 520px; }
 }
