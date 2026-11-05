@@ -26,24 +26,16 @@ const realtime = useRealtimeStore();
 const settings = useSettingsStore();
 
 const detail = ref<RunnerDetail | null>(null);
+const dailyCurve = ref<CurvePoint[]>([]);
 const loading = ref(true);
 const error = ref('');
 const pauseBusy = ref(false);
 const processBusy = ref('');
 const tokenOpen = ref(false);
-const range = ref<'1D' | '1W' | '1M' | '3M' | 'ALL'>('1D');
 const eventType = ref<'all' | 'message' | 'signal'>('all');
 const eventQuery = ref('');
 let pollTimer: number | undefined;
 let reloadTimer: number | undefined;
-
-const ranges = [
-  { key: '1D', label: '1日', days: 1 },
-  { key: '1W', label: '1周', days: 7 },
-  { key: '1M', label: '1月', days: 30 },
-  { key: '3M', label: '3月', days: 90 },
-  { key: 'ALL', label: '全部', days: 0 },
-] as const;
 
 const runner = computed<Runner | null>(() => detail.value?.runner ?? null);
 const account = computed(() => detail.value?.account ?? null);
@@ -64,22 +56,18 @@ const filteredEvents = computed<RunnerEvent[]>(() => {
       .some((value) => String(value).toLowerCase().includes(keyword));
   });
 });
-const equityCurve = computed<CurvePoint[]>(() => {
-  const curve = detail.value?.equity_curve ?? [];
-  if (!curve.length) return [];
-  const cfg = ranges.find((item) => item.key === range.value);
-  if (!cfg || cfg.days === 0) return curve;
-  const latest = Date.parse(curve[curve.length - 1].ts);
-  const cutoff = latest - cfg.days * 86400000;
-  const filtered = curve.filter((point) => Date.parse(point.ts) >= cutoff);
-  return filtered.length > 1 ? filtered : curve.slice(-2);
-});
+const equityCurve = computed<CurvePoint[]>(() => dailyCurve.value);
 
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
   try {
-    detail.value = await api.runner(String(route.params.id));
+    const [runnerDetail, curve] = await Promise.all([
+      api.runner(String(route.params.id)),
+      api.equityCurve('runner', String(route.params.id)),
+    ]);
+    detail.value = runnerDetail;
+    dailyCurve.value = curve.items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '策略加载失败';
   } finally {
@@ -201,13 +189,11 @@ onBeforeUnmount(() => {
             <span class="meta-item">{{ runner.last_seen ? '最后心跳 ' + fromNow(runner.last_seen) : '尚未上报' }}</span>
           </div>
         </div>
-        <div class="detail-range">
-          <button v-for="item in ranges" :key="item.key" type="button" :class="{ active: range === item.key }" @click="range = item.key">{{ item.label }}</button>
-        </div>
+        <span class="chart-window">全部历史 · 日粒度</span>
       </section>
 
       <section class="card chart-card">
-        <NavChart :data="equityCurve" :height="220" />
+        <NavChart :data="equityCurve" :height="220" date-only />
       </section>
 
       <section class="detail-grid">
@@ -215,7 +201,6 @@ onBeforeUnmount(() => {
           <section class="card block-card">
             <div class="block-head">
               <div><h3>进程</h3><span class="block-sub">{{ runner.online_processes }}/{{ runner.process_count }} 在线 · 停用后不参与存活判定</span></div>
-              <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
             </div>
             <ProcessTable
               :processes="processes"
@@ -243,7 +228,6 @@ onBeforeUnmount(() => {
         <section class="card activity-card">
           <div class="block-head activity-title">
             <div><h3>动态</h3><span class="block-sub">{{ filteredEvents.length }} 条</span></div>
-            <span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span>
           </div>
           <div class="activity-tools">
             <div class="event-search">
@@ -277,6 +261,7 @@ onBeforeUnmount(() => {
 .account-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 10px; }
 .account-link:hover { color: var(--primary); }
 .broker-chip { padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px; }
+.chart-window { color: var(--text-3); font-size: 10px; white-space: nowrap; }
 .detail-range { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .detail-range button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
 .detail-range button.active { background: var(--primary-soft); color: var(--text); }

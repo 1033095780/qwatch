@@ -83,6 +83,15 @@ CREATE TABLE IF NOT EXISTS processes (
 );
 CREATE INDEX IF NOT EXISTS idx_processes_runner ON processes(runner_id);
 
+CREATE TABLE IF NOT EXISTS process_day_health (
+  process_id INTEGER NOT NULL,
+  day TEXT NOT NULL,
+  up_samples INTEGER NOT NULL DEFAULT 0,
+  total_samples INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(process_id, day)
+);
+CREATE INDEX IF NOT EXISTS idx_process_day_health_day ON process_day_health(day);
+
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   runner_id TEXT NOT NULL,
@@ -761,6 +770,17 @@ def _upgrade_v02_to_v03(conn: sqlite3.Connection) -> None:
     _set_schema_version(conn, 3)
 
 
+def _ensure_process_health(conn: sqlite3.Connection) -> None:
+    """7 天可用率采样表（v0.6 增量）。"""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS process_day_health ("
+        " process_id INTEGER NOT NULL, day TEXT NOT NULL,"
+        " up_samples INTEGER NOT NULL DEFAULT 0, total_samples INTEGER NOT NULL DEFAULT 0,"
+        " PRIMARY KEY(process_id, day))"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_process_day_health_day ON process_day_health(day)")
+
+
 def _ensure_account_nav_columns(conn: sqlite3.Connection) -> None:
     """v0.6：账户手动 NAV 覆盖列。"""
     columns = _columns(conn, "accounts")
@@ -785,6 +805,7 @@ def init_db() -> None:
         if is_v5:
             _exec_script(conn, SCHEMA)
             _ensure_account_nav_columns(conn)
+            _ensure_process_health(conn)
             if _schema_version(conn) != SCHEMA_VERSION:
                 _set_schema_version(conn, SCHEMA_VERSION)
             return
@@ -813,4 +834,5 @@ def init_db() -> None:
             raise RuntimeError("旧库迁移失败，已回滚；请备份 data/qwatch.db 后重试") from exc
         _exec_script(conn, SCHEMA)
         _ensure_account_nav_columns(conn)
+        _ensure_process_health(conn)
         _set_schema_version(conn, SCHEMA_VERSION)

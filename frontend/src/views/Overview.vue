@@ -14,7 +14,6 @@ import GroupCard from '@/components/GroupCard.vue';
 import NavChart from '@/components/NavChart.vue';
 import NavSparkline from '@/components/NavSparkline.vue';
 import SectionCard from '@/components/SectionCard.vue';
-import StatusDot from '@/components/StatusDot.vue';
 
 const settings = useSettingsStore();
 const realtime = useRealtimeStore();
@@ -23,27 +22,28 @@ const router = useRouter();
 const data = ref<Overview | null>(null);
 const loading = ref(true);
 const error = ref('');
-const selectedAccount = ref<string>('all');
-const range = ref<'1D' | '1W' | '1M' | '3M' | 'ALL'>('1D');
-const accountCurve = ref<CurvePoint[]>([]);
+const chartScope = ref<string>('all');
+const metric = ref<'equity' | 'profit'>('equity');
+const scopeCurve = ref<CurvePoint[]>([]);
 const curveLoading = ref(false);
 const curveCache = new Map<string, CurvePoint[]>();
 let pollTimer: number | undefined;
 let reloadTimer: number | undefined;
 
-const ranges = [
-  { key: '1D', label: '1日', days: 1 },
-  { key: '1W', label: '1周', days: 7 },
-  { key: '1M', label: '1月', days: 30 },
-  { key: '3M', label: '3月', days: 90 },
-  { key: 'ALL', label: '全部', days: 0 },
-] as const;
-
 const accounts = computed<Account[]>(() => data.value?.accounts ?? []);
-const accountOptions = computed(() => [
-  { id: 'all', label: '全部账户' },
-  ...accounts.value.map((account) => ({ id: account.id, label: account.broker && account.broker !== account.name ? account.broker + ' · ' + account.name : account.name })),
-]);
+const chartGroups = computed(() => {
+  const runners = data.value?.runners || [];
+  return [
+    { label: '全部', options: [{ value: 'all', label: '全部账户 · 全部策略' }] },
+    ...accounts.value.map((account) => ({
+      label: account.name,
+      options: [
+        { value: 'account:' + account.id, label: account.name + ' · 账户汇总' },
+        ...runners.filter((r) => r.account_id === account.id).map((r) => ({ value: 'runner:' + r.id, label: '　' + r.name })),
+      ],
+    })),
+  ];
+});
 
 const summary = computed(() => {
   const ov = data.value;
@@ -63,19 +63,21 @@ const equityChange = computed(() => {
   const n = Number(raw);
   return Number.isFinite(n) ? n : null;
 });
-const sourceCurve = computed<CurvePoint[]>(() => (selectedAccount.value === 'all'
-  ? data.value?.equity_curve ?? []
-  : accountCurve.value));
+const sourceCurve = computed<CurvePoint[]>(() => scopeCurve.value);
 const equityCurve = computed<CurvePoint[]>(() => {
-  const curve = sourceCurve.value;
-  if (!curve.length) return [];
-  const cfg = ranges.find((item) => item.key === range.value);
-  if (!cfg || cfg.days === 0) return curve;
-  const latest = Date.parse(curve[curve.length - 1].ts);
-  const cutoff = latest - cfg.days * 86400000;
-  const filtered = curve.filter((point) => Date.parse(point.ts) >= cutoff);
-  return filtered.length > 1 ? filtered : curve.slice(-2);
+  // 大图统一按自然日取当日最后一个权益点，展示全部历史。
+  const byDay = new Map<string, CurvePoint>();
+  for (const point of sourceCurve.value) {
+    const key = new Date(point.ts).toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+    byDay.set(key, point);
+  }
+  const daily = [...byDay.values()];
+  if (!daily.length) return [];
+  if (metric.value === 'equity') return daily;
+  const baseline = Number(daily[0].value) || 0;
+  return daily.map((point) => ({ ts: point.ts, value: String(Number(point.value) - baseline) }));
 });
+const metricLabel = computed(() => metric.value === 'equity' ? '权益' : '盈利额');
 const recentEvents = computed<RunnerEvent[]>(() => {
   const live = realtime.events;
   const initial = data.value?.recent_events || [];
@@ -89,17 +91,20 @@ const sortedRunners = computed(() => [...(data.value?.runners || [])].sort((a, b
   return order || a.name.localeCompare(b.name, 'zh-CN');
 }));
 
-async function loadAccountCurve(id: string): Promise<void> {
-  if (!id || id === 'all') { accountCurve.value = []; return; }
-  const cached = curveCache.get(id);
-  if (cached) { accountCurve.value = cached; return; }
+async function loadScope(value: string): Promise<void> {
+  if (!value) return;
+  const cached = curveCache.get(value);
+  if (cached) { scopeCurve.value = cached; return; }
   curveLoading.value = true;
   try {
-    const curve = await api.accountEquityCurve(id);
-    curveCache.set(id, curve);
-    accountCurve.value = curve;
+    let curve: CurvePoint[] = [];
+    if (value === 'all') curve = (await api.equityCurve('all')).items;
+    else if (value.startsWith('account:')) curve = (await api.equityCurve('account', value.slice(8))).items;
+    else if (value.startsWith('runner:')) curve = (await api.equityCurve('runner', value.slice(7))).items;
+    curveCache.set(value, curve);
+    scopeCurve.value = curve;
   } catch {
-    accountCurve.value = [];
+    scopeCurve.value = [];
   } finally {
     curveLoading.value = false;
   }
@@ -110,13 +115,8 @@ async function load(initial = false, silent = false): Promise<void> {
   error.value = '';
   try {
     data.value = await api.overview();
-    if (selectedAccount.value !== 'all' && !(data.value.accounts || []).some((account) => account.id === selectedAccount.value)) {
-      selectedAccount.value = 'all';
-    }
-    if (selectedAccount.value !== 'all') {
-      curveCache.delete(selectedAccount.value);
-      await loadAccountCurve(selectedAccount.value);
-    }
+    curveCache.delete(chartScope.value);
+    await loadScope(chartScope.value);
   } catch (err) {
     if (!silent) error.value = err instanceof Error ? err.message : '总览加载失败';
   } finally {
@@ -124,9 +124,10 @@ async function load(initial = false, silent = false): Promise<void> {
   }
 }
 
-function selectAccount(id: string): void {
-  selectedAccount.value = id;
-  void loadAccountCurve(id);
+function selectScope(value: string): void {
+  chartScope.value = value;
+  scopeCurve.value = [];
+  void loadScope(value);
 }
 
 function openEvent(event: RunnerEvent): void {
@@ -200,19 +201,23 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="overview-main">
-        <SectionCard title="权益曲线">
+        <SectionCard :title="metric === 'equity' ? '权益曲线' : '盈利额曲线'">
           <template #extra>
             <div class="chart-tools">
-              <select :value="selectedAccount" class="chart-select" aria-label="选择账户" @change="selectAccount(($event.target as HTMLSelectElement).value)">
-                <option v-for="option in accountOptions" :key="option.id" :value="option.id">{{ option.label }}</option>
+              <span class="chart-granularity">全部历史 · 日粒度</span>
+              <select :value="chartScope" class="chart-select" aria-label="选择账户或策略" @change="selectScope(($event.target as HTMLSelectElement).value)">
+                <optgroup v-for="group in chartGroups" :key="group.label" :label="group.label">
+                  <option v-for="option in group.options" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </optgroup>
               </select>
-              <div class="range-tabs">
-                <button v-for="item in ranges" :key="item.key" type="button" :class="{ active: range === item.key }" @click="range = item.key">{{ item.label }}</button>
+              <div class="metric-tabs">
+                <button type="button" :class="{ active: metric === 'equity' }" @click="metric = 'equity'">权益</button>
+                <button type="button" :class="{ active: metric === 'profit' }" @click="metric = 'profit'">盈利额</button>
               </div>
             </div>
           </template>
           <div class="chart-wrap" :class="{ dimmed: curveLoading }">
-            <NavChart :data="equityCurve" fill />
+            <NavChart :data="equityCurve" fill date-only />
           </div>
         </SectionCard>
 
@@ -227,7 +232,6 @@ onBeforeUnmount(() => {
 
       <div class="overview-lower">
         <SectionCard title="动态">
-          <template #extra><span class="live-hint" :class="{ live: realtime.live }"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" />{{ realtime.live ? '实时' : '轮询' }}</span></template>
           <div class="ov-activity-scroll">
             <button v-for="event in recentEvents" :key="event.id" type="button" class="ov-event" @click="openEvent(event)">
               <span class="ov-event-type" :class="event.type">{{ event.type === 'signal' ? '信号' : '消息' }}</span>
@@ -279,6 +283,10 @@ onBeforeUnmount(() => {
 .chart-wrap.dimmed { opacity: 0.55; }
 
 .chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chart-granularity { color: var(--text-3); font-size: 10px; white-space: nowrap; }
+.metric-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+.metric-tabs button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
+.metric-tabs button.active { background: var(--primary-soft); color: var(--text); }
 .chart-select { height: 27px; min-width: 150px; max-width: 220px; padding: 0 24px 0 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 11px; outline: none; cursor: pointer; }
 .range-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .range-tabs button { height: 23px; padding: 0 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
@@ -320,8 +328,6 @@ onBeforeUnmount(() => {
 .alert-empty div { display: flex; flex-direction: column; gap: 2px; }
 .alert-empty strong { color: var(--text-2); font-size: 12px; font-weight: 500; }
 .alert-empty span { color: var(--text-3); font-size: 10px; }
-.live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
-.live-hint.live { color: var(--down); }
 
 @media (max-height: 820px) {
   .overview-page { gap: 12px; }

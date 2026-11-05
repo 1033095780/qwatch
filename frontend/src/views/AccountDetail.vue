@@ -21,42 +21,25 @@ const strategies = ref<Runner[]>([]);
 const curve = ref<CurvePoint[]>([]);
 const loading = ref(true);
 const error = ref('');
-const range = ref<'1D' | '1W' | '1M' | '3M' | 'ALL'>('1D');
 let timer: number | undefined;
 let reloadTimer: number | undefined;
-
-const ranges = [
-  { key: '1D', label: '1日', days: 1 },
-  { key: '1W', label: '1周', days: 7 },
-  { key: '1M', label: '1月', days: 30 },
-  { key: '3M', label: '3月', days: 90 },
-  { key: 'ALL', label: '全部', days: 0 },
-] as const;
 
 const todayPnl = computed(() => {
   const n = Number(account.value?.today_pnl);
   return account.value?.today_pnl !== null && account.value?.today_pnl !== undefined && Number.isFinite(n) ? n : null;
 });
-const chartData = computed(() => {
-  if (!curve.value.length) return [];
-  const cfg = ranges.find((item) => item.key === range.value);
-  if (!cfg || cfg.days === 0) return curve.value;
-  const latest = Date.parse(curve.value[curve.value.length - 1].ts);
-  const cutoff = latest - cfg.days * 86400000;
-  const filtered = curve.value.filter((point) => Date.parse(point.ts) >= cutoff);
-  return filtered.length > 1 ? filtered : curve.value.slice(-2);
-});
+const chartData = computed(() => curve.value);
 async function load(initial = false): Promise<void> {
   if (initial) loading.value = true;
   error.value = '';
   try {
     const [detail, points] = await Promise.all([
       api.account(String(route.params.id)),
-      api.accountEquityCurve(String(route.params.id)),
+      api.equityCurve('account', String(route.params.id)),
     ]);
     account.value = detail.account;
     strategies.value = detail.strategies;
-    curve.value = points;
+    curve.value = points.items;
   } catch (err) {
     error.value = err instanceof Error ? err.message : '账户加载失败';
   } finally {
@@ -102,13 +85,11 @@ onBeforeUnmount(() => {
             <span>{{ account.strategy_count }} 个策略 · {{ account.online_strategies }} 在线</span>
           </div>
         </div>
-        <div class="range-tabs">
-          <button v-for="item in ranges" :key="item.key" type="button" :class="{ active: range === item.key }" @click="range = item.key">{{ item.label }}</button>
-        </div>
+        <span class="chart-window">全部历史 · 日粒度</span>
       </section>
 
       <section class="card chart-card">
-        <NavChart :data="chartData" :height="260" />
+        <NavChart :data="chartData" :height="260" date-only />
       </section>
 
       <section class="strategies-section">
@@ -126,6 +107,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.chart-window { color: var(--text-3); font-size: 10px; white-space: nowrap; }
 .account-hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 4px 2px 0; }
 .account-title { display: flex; align-items: center; gap: 8px; }
 .account-title h2 { font-size: 22px; font-weight: 650; color: #ffffff; letter-spacing: -0.02em; }

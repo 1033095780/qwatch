@@ -128,6 +128,28 @@ async function loadEvents(reset = true): Promise<void> {
   }
 }
 
+async function refreshLatest(): Promise<void> {
+  try {
+    const res = await api.events({
+      limit: 50,
+      type: typeFilter.value === 'all' ? undefined : typeFilter.value,
+      account_id: accountFilter.value === 'all' ? undefined : accountFilter.value,
+      q: keyword.value.trim() || undefined,
+      days: daysFilter.value || undefined,
+    });
+    const existing = new Set(events.value.map((item) => String(item.id)));
+    const fresh = res.items.filter((item) => !existing.has(String(item.id)));
+    if (fresh.length) events.value = [...fresh, ...events.value];
+    if (!events.value.length) {
+      events.value = res.items;
+      hasMore.value = res.has_more;
+      nextBefore.value = res.next_before_id;
+    }
+  } catch {
+    // 静默刷新失败不打断当前阅读
+  }
+}
+
 async function loadAlerts(): Promise<void> {
   alertsLoading.value = true;
   alertsError.value = '';
@@ -167,7 +189,7 @@ function scheduleFilter(): void {
 }
 function scheduleFeedRefresh(): void {
   window.clearTimeout(refreshTimer);
-  refreshTimer = window.setTimeout(() => { void loadEvents(true); }, 350);
+  refreshTimer = window.setTimeout(() => { void refreshLatest(); }, 350);
 }
 function scheduleAlertRefresh(): void {
   window.clearTimeout(alertTimer);
@@ -176,7 +198,11 @@ function scheduleAlertRefresh(): void {
 
 watch(() => [typeFilter.value, accountFilter.value, daysFilter.value], () => { void loadEvents(true); });
 watch(keyword, scheduleFilter);
-watch(() => settings.refreshSeq, () => { void loadEvents(true); void loadAlerts(); });
+watch(() => settings.refreshSeq, () => {
+  if (events.value.length) void refreshLatest();
+  else void loadEvents(true);
+  void loadAlerts();
+});
 watch(() => realtime.lastEventAt, scheduleFeedRefresh);
 watch(() => realtime.lastAlertChangeAt, scheduleAlertRefresh);
 
@@ -203,7 +229,6 @@ onBeforeUnmount(() => {
       <n-select v-model:value="daysFilter" :options="rangeOptions" size="small" class="range-select" />
       <div class="toolbar-tail">
         <span class="count mono">{{ eventCount }} 条</span>
-        <span class="live-indicator" :class="{ live: realtime.live }"><i />{{ realtime.live ? '实时' : '轮询' }}</span>
       </div>
     </div>
 
@@ -281,10 +306,6 @@ onBeforeUnmount(() => {
 .range-select { width: 110px; }
 .toolbar-tail { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .count { color: var(--text-3); font-size: 11px; }
-.live-indicator { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 11px; }
-.live-indicator i { width: 5px; height: 5px; border-radius: 50%; background: var(--warning); }
-.live-indicator.live { color: var(--down); }
-.live-indicator.live i { background: var(--down); box-shadow: 0 0 7px var(--down); }
 .activity-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(320px, 0.8fr); gap: 12px; }
 .feed-card, .alert-panel { min-height: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .card-bar { flex: none; height: 44px; padding: 0 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); }

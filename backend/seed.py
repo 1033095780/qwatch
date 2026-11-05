@@ -13,8 +13,6 @@ CHANNELS = [
     # id, name, type, enabled, webhook, secret
     ("dingtalk_main", "钉钉 · 主机器人", "dingtalk_robot", 1,
      "https://oapi.dingtalk.com/robot/send?access_token=demo-main-token", "SECdemo-main-secret"),
-    ("dingtalk_backup", "钉钉 · 备用机器人", "dingtalk_robot", 0,
-     "https://oapi.dingtalk.com/robot/send?access_token=demo-backup-token", ""),
 ]
 
 TABLES = [
@@ -24,6 +22,7 @@ TABLES = [
     "alerts",
     "events",
     "processes",
+    "process_day_health",
     "runners",
     "tokens",
     "sessions",

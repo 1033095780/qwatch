@@ -1,12 +1,19 @@
 <script setup lang="ts">
 // HeartbeatGrid.vue — 24 格心跳/状态格，保持 v0.1 的彩色块视觉。
 import { computed } from 'vue';
-import type { ProcessStatus, RunnerStatus } from '@/api/types';
+import type { HeartbeatDay, ProcessStatus, RunnerStatus } from '@/api/types';
 
-const props = withDefaults(defineProps<{ status: RunnerStatus | ProcessStatus; retired?: boolean; lastSeen?: string | null; stretch?: boolean }>(), {
+const props = withDefaults(defineProps<{
+  status: RunnerStatus | ProcessStatus;
+  retired?: boolean;
+  lastSeen?: string | null;
+  stretch?: boolean;
+  history?: HeartbeatDay[];
+}>(), {
   retired: false,
   lastSeen: null,
   stretch: false,
+  history: () => [],
 });
 
 const bars = computed(() => {
@@ -17,10 +24,21 @@ const bars = computed(() => {
   if (status === 'paused') return Array(24).fill('off');
   return Array(24).fill('off');
 });
+function dayTitle(day: HeartbeatDay): string {
+  if (day.ratio === null) return day.date + ' 暂无采样';
+  return day.date + ' 可用率 ' + (day.ratio * 100).toFixed(2) + '%';
+}
+function dayColor(day: HeartbeatDay): string {
+  if (day.ratio === null) return '#3a465c';
+  return 'hsl(' + Math.round(day.ratio * 120) + ', 62%, 46%)';
+}
 </script>
 
 <template>
-  <div class="hb-grid" :class="{ stretch }" :title="lastSeen ? '最后心跳 ' + lastSeen : '暂无心跳'" role="img" aria-label="心跳状态">
+  <div v-if="history.length" class="hb-grid hb-days" :class="{ stretch }" role="img" aria-label="最近 7 天可用率">
+    <span v-for="day in history" :key="day.date" class="hb-day" :style="{ background: dayColor(day) }" :title="dayTitle(day)" />
+  </div>
+  <div v-else class="hb-grid" :class="{ stretch }" :title="lastSeen ? '最后心跳 ' + lastSeen : '暂无心跳'" role="img" aria-label="心跳状态">
     <span v-for="(tone, i) in bars" :key="i" class="hb-cell" :class="tone" />
   </div>
 </template>
@@ -49,6 +67,7 @@ const bars = computed(() => {
   width: auto;
   height: 9px;
 }
+.hb-days .hb-day { flex: 1; width: auto; height: 10px; border-radius: 2px; min-width: 4px; }
 .hb-cell.ok { background: #2ecc8f; }
 .hb-cell.warn { background: #f5a524; }
 .hb-cell.bad { background: #f04438; }

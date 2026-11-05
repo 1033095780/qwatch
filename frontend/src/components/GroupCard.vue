@@ -57,7 +57,7 @@ function goDetail(): void {
         <span class="proc-meta">{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
         <span v-if="runner.status === 'paused'" class="paused-label">已暂停监控</span>
       </div>
-      <HeartbeatGrid stretch :status="runner.status" :last-seen="runner.last_seen" class="card-heartbeat" />
+      <HeartbeatGrid stretch :status="runner.status" :last-seen="runner.last_seen" :history="runner.heartbeat_7d" class="card-heartbeat" />
     </footer>
   </article>
 </template>

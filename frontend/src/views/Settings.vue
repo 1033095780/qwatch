@@ -1,9 +1,9 @@
-// Settings.vue — v0.2 设置：钉钉通知渠道（启用/编辑/测试）+ 显示偏好；移除日历/安全伪配置。
+// Settings.vue — 设置：单个钉钉通知渠道（启用/编辑/测试）；不含备用机器人与显示偏好。
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { NButton, NSwitch, useMessage } from 'naive-ui';
 import { BellRing, Pencil, Send } from 'lucide-vue-next';
-import type { Channel, TestChannelResult, UpColorScheme } from '@/api/types';
+import type { Channel, TestChannelResult } from '@/api/types';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtDateTime } from '@/utils/format';
 import ChannelEditModal from '@/components/ChannelEditModal.vue';
@@ -19,10 +19,6 @@ const editingChannel = ref<Channel | null>(null);
 const settings = computed(() => store.data);
 const loading = computed(() => store.loading && !store.data);
 const error = computed(() => store.error);
-
-function schemeLabel(scheme: UpColorScheme): string {
-  return scheme === 'red_up' ? '红涨绿跌（A股习惯）' : '绿涨红跌（欧美习惯）';
-}
 
 async function onToggleChannel(channel: Channel, enabled: boolean): Promise<void> {
   busyChannel.value = channel.id;
@@ -52,11 +48,6 @@ async function onTestChannel(channel: Channel): Promise<void> {
 function openChannelEdit(channel: Channel): void {
   editingChannel.value = channel;
   channelModal.value = true;
-}
-
-async function changeScheme(scheme: UpColorScheme): Promise<void> {
-  store.applyScheme(scheme);
-  message.success('涨跌配色已切换：' + schemeLabel(scheme));
 }
 
 watch(() => store.refreshSeq, () => { void store.load(true); });
@@ -132,24 +123,6 @@ onMounted(() => {
         <p class="section-note">Webhook 与加签密钥保存后不再回显，页面只展示掩码；测试发送会向该渠道发一条测试消息。</p>
       </section>
 
-      <section class="card settings-card">
-        <div class="section-head">
-          <div>
-            <h2 class="section-title">显示偏好</h2>
-            <p class="section-sub">颜色仅影响动态中的方向标签（做多/做空）；偏好保存在本机浏览器。</p>
-          </div>
-        </div>
-        <div class="pref-row">
-          <div>
-            <span class="pref-name">涨跌配色</span>
-            <span class="pref-desc">当前 {{ schemeLabel(store.upColorScheme) }}</span>
-          </div>
-          <div class="seg">
-            <button type="button" :class="{ active: store.upColorScheme === 'red_up' }" @click="changeScheme('red_up')">红涨绿跌</button>
-            <button type="button" :class="{ active: store.upColorScheme === 'green_up' }" @click="changeScheme('green_up')">绿涨红跌</button>
-          </div>
-        </div>
-      </section>
     </template>
 
     <ChannelEditModal v-model:show="channelModal" :channel="editingChannel" />

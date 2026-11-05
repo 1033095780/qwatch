@@ -89,11 +89,18 @@ async function submit(): Promise<void> {
       <n-form-item label="Webhook 地址" path="webhook">
         <n-input
           v-model:value="form.webhook"
+          :input-props="{ autocomplete: 'new-password', name: 'qwatch_webhook_url' }"
           :placeholder="channel ? '当前：' + channel.webhook_masked + '（请粘贴完整地址）' : 'https://oapi.dingtalk.com/robot/send?access_token=...'"
         />
       </n-form-item>
       <n-form-item label="加签密钥">
-        <n-input v-model:value="form.secret" type="password" show-password-on="click" placeholder="没有加签就留空；留空保存会清除旧密钥" />
+        <n-input
+          v-model:value="form.secret"
+          type="password"
+          show-password-on="click"
+          :input-props="{ autocomplete: 'new-password', name: 'qwatch_webhook_secret' }"
+          placeholder="没有加签就留空；留空保存会清除旧密钥"
+        />
       </n-form-item>
       <n-form-item label="启用渠道">
         <n-switch v-model:value="form.enabled" />

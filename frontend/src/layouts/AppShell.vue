@@ -16,7 +16,6 @@ import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import BrandMark from '@/components/BrandMark.vue';
 import StatusControls from '@/components/StatusControls.vue';
-import StatusDot from '@/components/StatusDot.vue';
 
 interface NavItem { to: string; label: string; icon: Component; badge?: boolean }
 
@@ -155,11 +154,10 @@ onBeforeUnmount(() => {
         </router-link>
       </nav>
       <div class="sidebar-foot">
-        <template v-if="!collapsed">
-          <span class="env"><StatusDot :status="realtime.live ? 'running' : 'warn'" :size="6" /> v0.6.0</span>
-          <span class="ver">qwatch · 可信看门狗</span>
-        </template>
-        <span v-else class="ver">0.5</span>
+        <div class="side-brand-line">
+          <span class="ver">v0.6.0</span>
+          <a class="ver-link" href="https://github.com/1033095780/qwatch" target="_blank" rel="noopener noreferrer">qwatch</a>
+        </div>
       </div>
     </aside>
     <div v-if="isMobile && drawerOpen" class="overlay" @click="drawerOpen = false" />

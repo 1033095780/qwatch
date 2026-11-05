@@ -123,6 +123,9 @@ export const api = {
   runners(params: { status?: string; q?: string; account_id?: string } = {}) {
     return request<ListResponse<Runner>>('/runners' + qs(params));
   },
+  equityCurve(scope: 'all' | 'account' | 'runner', id?: string) {
+    return request<{ items: CurvePoint[] }>('/equity_curve' + qs({ scope, id }));
+  },
   events(params: { limit?: number; before_id?: number | null; type?: string; runner_id?: string; account_id?: string; q?: string; days?: number } = {}) {
     return request<EventFeedResponse>('/events' + qs(params));
   },

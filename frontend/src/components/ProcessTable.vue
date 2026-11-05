@@ -32,7 +32,7 @@ const emit = defineEmits<{ retire: [name: string]; activate: [name: string] }>()
         <tr v-for="p in processes" :key="p.name" :class="{ 'row-retired': p.retired }">
           <td class="mono cell-strong">{{ p.name }}</td>
           <td><StatusTag :status="p.retired ? 'retired' : p.status" compact /></td>
-          <td class="hb-cell"><HeartbeatGrid :status="p.status" :retired="p.retired" :last-seen="p.last_seen" /></td>
+          <td class="hb-cell"><HeartbeatGrid :status="p.status" :retired="p.retired" :last-seen="p.last_seen" :history="p.heartbeat_7d" /></td>
           <td class="muted nowrap" :title="p.last_seen || ''">{{ p.last_seen ? fromNow(p.last_seen) : '从未上报' }}</td>
           <td class="td-num mono">{{ p.loop === null || p.loop === undefined ? '—' : p.loop }}</td>
           <td v-if="actionable" class="td-actions">

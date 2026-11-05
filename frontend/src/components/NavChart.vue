@@ -8,7 +8,8 @@ const props = withDefaults(defineProps<{
   height?: number;
   currency?: boolean;
   fill?: boolean;
-}>(), { height: 200, currency: true, fill: false });
+  dateOnly?: boolean;
+}>(), { height: 200, currency: true, fill: false, dateOnly: false });
 
 const wrap = ref<HTMLElement | null>(null);
 const renderHeight = ref(props.height);
@@ -45,8 +46,12 @@ const area = computed(() => {
   return line.value + ' L' + last.x.toFixed(1) + ' ' + (renderHeight.value - PAD_Y) + ' L' + coords.value[0].x.toFixed(1) + ' ' + (renderHeight.value - PAD_Y) + ' Z';
 });
 const hover = computed(() => (hoverIndex.value === null ? null : coords.value[hoverIndex.value] || null));
-const startLabel = computed(() => props.data.length ? fmtDateTime(props.data[0].ts) : '');
-const endLabel = computed(() => props.data.length ? fmtDateTime(props.data[props.data.length - 1].ts) : '');
+const fmtAxis = (ts: string): string => {
+  const full = fmtDateTime(ts);
+  return props.dateOnly ? full.slice(0, 5) : full;
+};
+const startLabel = computed(() => props.data.length ? fmtAxis(props.data[0].ts) : '');
+const endLabel = computed(() => props.data.length ? fmtAxis(props.data[props.data.length - 1].ts) : '');
 const fmtValue = (value: number): string => (props.currency ? '¥' + fmtNumber(value, 0) : fmtNumber(value, 4));
 
 function onMove(event: MouseEvent): void {
