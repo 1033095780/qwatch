@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from urllib.parse import urlparse
 from datetime import timedelta
 
 from .db import connect, iso_now, loads
@@ -33,12 +34,29 @@ def dingtalk_endpoint(webhook: str, secret: str) -> str:
     return webhook
 
 
+def _safe_dingtalk_url(webhook: str) -> bool:
+    parsed = urlparse(webhook)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "oapi.dingtalk.com"
+        and parsed.path == "/robot/send"
+        and "access_token=" in parsed.query
+    )
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 def deliver_sync(webhook: str, secret: str, text: str, timeout: float = 6.0) -> tuple[bool, str]:
     """同步发送一条钉钉文本消息；返回 (ok, error)。"""
     if not webhook:
         return False, "未配置 webhook"
     if "demo-" in webhook:
         return False, "demo 渠道跳过"
+    if not _safe_dingtalk_url(webhook):
+        return False, "webhook 只允许钉钉机器人地址"
     url = dingtalk_endpoint(webhook, secret)
     body = json.dumps({"msgtype": "text", "text": {"content": DINGTALK_KEYWORD + " " + text}}, ensure_ascii=False)
     request = urllib.request.Request(
@@ -48,8 +66,9 @@ def deliver_sync(webhook: str, secret: str, text: str, timeout: float = 6.0) -> 
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", errors="ignore")
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(65536).decode("utf-8", errors="ignore")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return False, str(exc)
     result = loads(raw, {})

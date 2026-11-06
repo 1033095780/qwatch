@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import notify, sse
@@ -47,7 +47,12 @@ WATCHDOG_INTERVAL_S = 5
 # 后端重启后给策略进程一个重连窗口，避免启动瞬间把昨天的心跳判死并发送 P0
 STARTUP_GRACE_S = 90
 MAX_EVENTS_RETURN = 100
+MAX_API_BODY_BYTES = 512 * 1024
+MAX_PROCESSES_PER_RUNNER = 64
+REPORT_RATE_PER_MINUTE = 600
 SETUP_LOCK = threading.Lock()
+REPORT_RATE: dict[Any, deque[float]] = defaultdict(deque)
+REPORT_RATE_LOCK = threading.Lock()
 
 logging.basicConfig(
     level=os.environ.get("QWATCH_LOG_LEVEL", "INFO"),
@@ -69,6 +74,20 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def api_body_limit(request: Request, call_next):
+    if request.url.path.startswith("/api/"):
+        raw = request.headers.get("content-length")
+        if raw:
+            try:
+                size = int(raw)
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Content-Length 非法"})
+            if size > MAX_API_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "请求体过大"})
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -605,6 +624,9 @@ def _ensure_process(conn, runner, name: str, at: datetime):
     if row:
         conn.execute("UPDATE processes SET last_seen = ?, updated_at = ? WHERE id = ?", (now, now, row["id"]))
         return conn.execute("SELECT * FROM processes WHERE id = ?", (row["id"],)).fetchone()
+    count = conn.execute("SELECT COUNT(*) AS n FROM processes WHERE runner_id = ?", (runner["id"],)).fetchone()["n"]
+    if count >= MAX_PROCESSES_PER_RUNNER:
+        raise HTTPException(status_code=400, detail="该策略进程数已达上限")
     conn.execute(
         "INSERT INTO processes(runner_id, name, last_seen, loop_same, status, retired, created_at, updated_at) "
         "VALUES(?,?,?,0,'offline',0,?,?)",
@@ -749,7 +771,12 @@ def _issue_session() -> dict[str, Any]:
 
 
 @app.post("/api/v1/auth/setup")
-def setup(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+def setup(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    client_ip = request.client.host if request.client else "local"
+    setup_token = os.environ.get("QWATCH_SETUP_TOKEN", "").strip()
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        if not setup_token or not hmac.compare_digest(str(payload.get("setup_token", "")), setup_token):
+            raise HTTPException(status_code=403, detail="首次初始化仅允许本机，或需要 QWATCH_SETUP_TOKEN")
     password = str(payload.get("password", ""))
     if len(password) < PASSWORD_MIN_LEN:
         raise HTTPException(status_code=400, detail="密码至少 " + str(PASSWORD_MIN_LEN) + " 位")
@@ -1155,6 +1182,14 @@ def activate_process(runner_id: str, name: str, user: str = Depends(require_user
 def report(payload: dict[str, Any] = Body(default={}), authorization: str | None = Header(default=None)) -> dict[str, Any]:
     with connect() as conn:
         token, runner = strategy_token(conn, authorization)
+    now_mono = time.monotonic()
+    with REPORT_RATE_LOCK:
+        bucket = REPORT_RATE[token["id"]]
+        while bucket and now_mono - bucket[0] > 60:
+            bucket.popleft()
+        if len(bucket) >= REPORT_RATE_PER_MINUTE:
+            raise HTTPException(status_code=429, detail="上报频率过高")
+        bucket.append(now_mono)
     instrument = str(payload.get("instrument") or "").strip()[:64]
     if not instrument:
         raise HTTPException(status_code=400, detail="instrument 必填（进程名）")
@@ -1631,14 +1666,10 @@ def test_channel(channel_id: str, user: str = Depends(require_user)) -> dict[str
 async def stream(
     request: Request,
     authorization: str | None = Header(default=None),
-    token: str | None = Query(default=None),
 ) -> StreamingResponse:
-    raw = ""
-    if authorization and authorization.startswith("Bearer "):
-        raw = authorization[7:].strip()
-    elif token:
-        raw = token.strip()
-    _session_user(raw)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="未登录或登录已过期")
+    _session_user(authorization[7:].strip())
     queue = await sse.bus.subscribe()
 
     async def generator():
