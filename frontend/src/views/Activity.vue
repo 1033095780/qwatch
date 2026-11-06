@@ -292,16 +292,15 @@ onBeforeUnmount(() => {
             <div><strong>{{ alertTab === 'active' ? '当前没有活跃告警' : '暂无历史告警' }}</strong><span>{{ alertTab === 'active' ? '所有策略心跳与运行状态正常' : '确认或恢复后会出现在这里' }}</span></div>
           </div>
           <template v-else>
-            <article v-for="alert in currentAlerts" :key="alert.id" class="alert-card" :class="alert.status">
-              <div class="alert-row">
-                <span class="rule">{{ ruleLabel(alert.rule) }}</span>
-                <span class="alert-summary" :title="alert.summary">{{ alert.summary }}</span>
-                <span class="status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
-                <span class="alert-time">{{ fromNow(alert.starts_at) }}</span>
-                <n-button v-if="alert.status === 'firing'" text size="tiny" :loading="acking === alert.id" @click="ackAlert(alert)">
-                  <template #icon><Check :size="12" /></template>
-                </n-button>
-              </div>
+            <article v-for="alert in currentAlerts" :key="alert.id" class="alert-item" :class="alert.status">
+              <span class="alert-dot" />
+              <span class="rule">{{ ruleLabel(alert.rule) }}</span>
+              <span class="alert-summary" :title="alert.summary">{{ alert.summary }}</span>
+              <span class="status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
+              <span class="alert-time">{{ fromNow(alert.starts_at) }}</span>
+              <n-button v-if="alert.status === 'firing'" text size="tiny" :loading="acking === alert.id" @click="ackAlert(alert)">
+                <template #icon><Check :size="12" /></template>
+              </n-button>
             </article>
           </template>
         </div>
@@ -352,18 +351,20 @@ onBeforeUnmount(() => {
 .alert-tabs button { flex: 1; height: 28px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); font-size: 11px; cursor: pointer; }
 .alert-tabs button b { margin-left: 3px; color: var(--text-2); font: 10px var(--font-mono); font-weight: 500; }
 .alert-tabs button.active { background: var(--primary-soft); color: var(--text); }
-.alert-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
-.alert-card { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-left: 2px solid #f25c5c; border-radius: 8px; background: rgba(21,28,44,.48); }
-.alert-card.resolved { border-left-color: var(--down); }
-.alert-card.acknowledged { border-left-color: var(--warning); }
-.alert-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
-.rule { flex: none; color: #f47c74; font-size: 10px; }
+.alert-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 8px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.alert-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 11px 4px 11px 0; border-bottom: 1px solid rgba(125,139,161,.1); }
+.alert-item:hover { background: rgba(91,140,255,.035); }
+.alert-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #f25c5c; }
+.alert-item.resolved .alert-dot { background: var(--down); opacity: .65; }
+.alert-item.acknowledged .alert-dot { background: var(--warning); }
+.rule { flex: none; color: #f47c74; font-size: 10px; white-space: nowrap; }
+.alert-item.resolved .rule { color: var(--text-3); }
 .alert-summary { flex: 1; min-width: 0; margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.status { flex: none; color: #f47c74; font-size: 9px; }
-.alert-card.resolved .status { color: var(--down); }
-.alert-card.acknowledged .status { color: var(--warning); }
-.alert-time { flex: none; color: var(--text-3); font-size: 9px; }
-.alert-row :deep(.n-button) { flex: none; }
+.status { flex: none; color: #f47c74; font-size: 9px; white-space: nowrap; }
+.alert-item.resolved .status { color: var(--down); }
+.alert-item.acknowledged .status { color: var(--warning); }
+.alert-time { flex: none; color: var(--text-3); font-size: 9px; white-space: nowrap; }
+.alert-item :deep(.n-button) { flex: none; }
 .empty-alert { display: flex; align-items: flex-start; gap: 8px; padding: 34px 4px; }
 .empty-alert .ok { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: var(--down); box-shadow: 0 0 8px rgba(46,204,143,.5); }
 .empty-alert div { display: flex; flex-direction: column; gap: 3px; }
