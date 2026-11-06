@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import notify, sse
@@ -53,6 +53,7 @@ REPORT_RATE_PER_MINUTE = 600
 SETUP_LOCK = threading.Lock()
 REPORT_RATE: dict[Any, deque[float]] = defaultdict(deque)
 REPORT_RATE_LOCK = threading.Lock()
+RESUME_ALERT_HOLD: set[str] = set()
 
 logging.basicConfig(
     level=os.environ.get("QWATCH_LOG_LEVEL", "INFO"),
@@ -98,6 +99,7 @@ async def security_headers(request: Request, call_next):
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
     response.headers["Content-Security-Policy"] = (
         "default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; "
         "img-src \'self\' data:; font-src \'self\' data:; connect-src \'self\'; "
@@ -727,6 +729,12 @@ def refresh_runner_state(conn, runner_id: str, publish: bool = True) -> dict[str
     active = [row for row in processes if not row["retired"]]
     stale = [row["name"] for row in active if statuses[row["id"]] == "offline"]
     stalled = [row["name"] for row in active if statuses[row["id"]] == "degraded"]
+    # 恢复监控后先等一次健康快照，避免把暂停前的旧告警立刻重新触发；
+    # 健康后清除保护，下一次真实故障才产生新告警。
+    if runner["id"] in RESUME_ALERT_HOLD:
+        if stale or stalled:
+            return state
+        RESUME_ALERT_HOLD.discard(runner["id"])
     _sync_alert(conn, runner, "heartbeat_lost", stale, publish)
     _sync_alert(conn, runner, "runner_stalled", stalled, publish)
     return state
@@ -752,6 +760,11 @@ def _resolve_runner_alerts(conn, runner) -> None:
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"ok": True, "service": "qwatch", "version": VERSION, "schema_version": SCHEMA_VERSION}
+
+
+@app.get("/robots.txt")
+def robots() -> PlainTextResponse:
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
 
 
 # ---------- 路由：鉴权 ----------
@@ -1095,7 +1108,8 @@ def pause_runner(runner_id: str, user: str = Depends(require_user)) -> dict[str,
             raise HTTPException(status_code=404, detail="策略不存在")
         conn.execute("UPDATE runners SET paused = 1 WHERE id = ?", (runner_id,))
         runner = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
-        _resolve_runner_alerts(conn, runner)
+        # 暂停只冻结告警生成，不解决既有告警；同时把进程状态落库为 paused。
+        refresh_runner_state(conn, runner_id, publish=True)
         loaded = _load_state(conn, runner_id)
         assert loaded is not None
         runner, processes, statuses, state = loaded
@@ -1114,6 +1128,7 @@ def resume_runner(runner_id: str, user: str = Depends(require_user)) -> dict[str
             raise HTTPException(status_code=404, detail="策略不存在")
         conn.execute("UPDATE runners SET paused = 0 WHERE id = ?", (runner_id,))
         runner = conn.execute("SELECT * FROM runners WHERE id = ?", (runner_id,)).fetchone()
+        RESUME_ALERT_HOLD.add(runner_id)
         refresh_runner_state(conn, runner_id, publish=True)
         loaded = _load_state(conn, runner_id)
         assert loaded is not None

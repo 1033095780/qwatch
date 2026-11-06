@@ -186,3 +186,16 @@ Apache-2.0
 - [字体与排版规范](docs/UI-TYPOGRAPHY.md)
 
 - [安全说明](SECURITY.md)
+
+## 当前自托管部署（2026-11-06）
+
+- 公网入口：`https://ohmyfolio.com`（含 `www`），Caddy 自动 HTTPS；
+- qwatch 只监听 `127.0.0.1:13337`，不直接暴露 13337；
+- Windows Server 2019，服务：`qwatch`、`caddy`（NSSM，开机自启）；
+- 数据：`C:\qwatch\data\qwatch.db`；每日 03:00 备份到 `C:\qwatch\backups`，保留 30 天；
+- 已关闭搜索引擎索引：`/robots.txt` + `X-Robots-Tag: noindex, nofollow, noarchive`；
+- PTrade `multi_sleeve` 通过 qwatch 单行 SDK 上报两个 sleeve：
+  - `instrument=smallcap`，使用质量小市值策略 token；
+  - `instrument=etf`，使用 ETF 轮动策略 token；
+- 详细运行路径、日志和更新步骤见 `docs/DEPLOYMENT.md`（本地文档，不随开源仓库发布）。
+
