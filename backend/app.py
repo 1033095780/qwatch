@@ -724,11 +724,15 @@ def refresh_runner_state(conn, runner_id: str, publish: bool = True) -> dict[str
             )
             if publish:
                 _publish_process(conn, runner, row, state)
-    if runner["paused"]:
-        return state
     active = [row for row in processes if not row["retired"]]
     stale = [row["name"] for row in active if statuses[row["id"]] == "offline"]
     stalled = [row["name"] for row in active if statuses[row["id"]] == "degraded"]
+    if runner["paused"]:
+        # 暂停期间不产生新告警；但如果状态已经恢复，旧告警要自动恢复。
+        if not stale and not stalled:
+            _sync_alert(conn, runner, "heartbeat_lost", [], publish)
+            _sync_alert(conn, runner, "runner_stalled", [], publish)
+        return state
     # 恢复监控后先等一次健康快照，避免把暂停前的旧告警立刻重新触发；
     # 健康后清除保护，下一次真实故障才产生新告警。
     if runner["id"] in RESUME_ALERT_HOLD:
