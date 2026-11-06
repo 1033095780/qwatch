@@ -764,6 +764,28 @@ def setup(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     return _issue_session()
 
 
+@app.post("/api/v1/auth/password")
+def change_password(
+    payload: dict[str, Any] = Body(default={}),
+    user: str = Depends(require_user),
+) -> dict[str, Any]:
+    if PASSWORD:
+        raise HTTPException(status_code=400, detail="当前密码由 QWATCH_PASSWORD 环境变量管理")
+    current = str(payload.get("current_password", ""))
+    new = str(payload.get("new_password", ""))
+    if not _verify_password(current):
+        raise HTTPException(status_code=400, detail="当前密码不正确")
+    if len(new) < PASSWORD_MIN_LEN:
+        raise HTTPException(status_code=400, detail="新密码至少 " + str(PASSWORD_MIN_LEN) + " 位")
+    if len(new) > 128:
+        raise HTTPException(status_code=400, detail="新密码过长")
+    with connect() as conn:
+        set_setting(conn, "password_hash", _hash_password(new))
+        conn.execute("DELETE FROM sessions")
+    logger.info("访问密码已更新")
+    return _issue_session()
+
+
 @app.post("/api/v1/auth/login")
 def login(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
     if _setup_required():

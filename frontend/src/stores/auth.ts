@@ -53,6 +53,22 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    loading.value = true;
+    error.value = '';
+    try {
+      const res = await api.changePassword(currentPassword, newPassword);
+      tokenStorage.set(res.token, true);
+      token.value = res.token;
+      user.value = res.user;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '修改密码失败';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function fetchMe(): Promise<void> {
     if (!token.value) return;
     try {
@@ -80,6 +96,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     token, user, loading, error, isAuthenticated, setupRequired, authStatus,
-    checkStatus, setup, login, fetchMe, logout,
+    checkStatus, setup, login, changePassword, fetchMe, logout,
   };
 });

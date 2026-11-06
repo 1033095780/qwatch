@@ -100,6 +100,12 @@ export const api = {
   setup(password: string) {
     return request<LoginResponse>('/auth/setup', { method: 'POST', body: JSON.stringify({ password }) });
   },
+  changePassword(currentPassword: string, newPassword: string) {
+    return request<LoginResponse>('/auth/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+  },
   login(password: string) {
     return request<LoginResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ password }) });
   },
