@@ -293,7 +293,6 @@ onBeforeUnmount(() => {
           </div>
           <template v-else>
             <article v-for="alert in currentAlerts" :key="alert.id" class="alert-item" :class="alert.status">
-              <span class="alert-dot" />
               <span class="rule">{{ ruleLabel(alert.rule) }}</span>
               <span class="alert-summary" :title="alert.summary">{{ alert.summary }}</span>
               <span class="status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
@@ -354,11 +353,7 @@ onBeforeUnmount(() => {
 .alert-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 16px 8px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .alert-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 11px 4px 11px 0; border-bottom: 1px solid rgba(125,139,161,.1); }
 .alert-item:hover { background: rgba(91,140,255,.035); }
-.alert-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: #f25c5c; }
-.alert-item.resolved .alert-dot { background: var(--down); opacity: .65; }
-.alert-item.acknowledged .alert-dot { background: var(--warning); }
-.rule { flex: none; color: #f47c74; font-size: 10px; white-space: nowrap; }
-.alert-item.resolved .rule { color: var(--text-3); }
+.rule { flex: none; padding: 2px 5px; border: 1px solid rgba(240,68,56,.25); border-radius: 4px; color: #f47c74; font-size: 10px; white-space: nowrap; }
 .alert-summary { flex: 1; min-width: 0; margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status { flex: none; color: #f47c74; font-size: 9px; white-space: nowrap; }
 .alert-item.resolved .status { color: var(--down); }

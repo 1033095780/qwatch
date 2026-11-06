@@ -9,6 +9,7 @@ import type { Account, CurvePoint, Overview, RunnerEvent } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtNumber, fromNow } from '@/utils/format';
+import { ruleLabel } from '@/utils/catalog';
 import EmptyState from '@/components/EmptyState.vue';
 import GroupCard from '@/components/GroupCard.vue';
 import NavChart from '@/components/NavChart.vue';
@@ -268,7 +269,7 @@ onBeforeUnmount(() => {
           <template #extra><router-link to="/activity" class="link-more">告警中心 <ChevronRight :size="13" /></router-link></template>
           <div v-if="recentAlerts.length" class="ov-alert-scroll">
             <router-link v-for="alert in recentAlerts" :key="alert.id" to="/activity" class="ov-alert">
-              <span class="ov-alert-dot" :class="alert.status" />
+              <span class="ov-alert-rule">{{ ruleLabel(alert.rule) }}</span>
               <span class="ov-alert-text">{{ alert.summary }}</span>
               <em>{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</em>
             </router-link>
@@ -341,7 +342,8 @@ onBeforeUnmount(() => {
 .ov-event time { color: var(--text-3); font: 10px var(--font-mono); white-space: nowrap; }
 .ov-alert-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .ov-alert-text { min-width: 0; flex: 1; color: var(--text-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ov-alert { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
+.ov-alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 7px; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
+.ov-alert-rule { padding: 1px 4px; border: 1px solid rgba(240,68,56,.25); border-radius: 3px; color: #f47c74; font-size: 9px; white-space: nowrap; }
 .ov-alert:last-child { border-bottom: 0; }
 .ov-alert-dot { width: 5px; height: 5px; margin-top: 4px; border-radius: 50%; background: #f25c5c; }
 .ov-alert-dot.resolved { background: var(--down); }

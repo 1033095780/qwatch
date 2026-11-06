@@ -243,16 +243,19 @@ onBeforeUnmount(() => {
             />
           </section>
 
-          <section v-if="alerts.length" class="card block-card">
+          <section class="card block-card">
             <div class="block-head">
               <div><h3>最近告警</h3><span class="block-sub">{{ alerts.length }} 条</span></div>
               <router-link to="/activity" class="inline-link">告警中心</router-link>
             </div>
-            <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/activity" class="alert-line">
-              <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
-              <span class="alert-text">{{ alert.summary }}</span>
-              <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
-            </router-link>
+            <template v-if="alerts.length">
+              <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/activity" class="alert-line">
+                <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
+                <span class="alert-text">{{ alert.summary }}</span>
+                <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
+              </router-link>
+            </template>
+            <div v-else class="alert-empty-hint">暂无告警 · 策略心跳与 loop 正常</div>
           </section>
         </div>
 
@@ -313,6 +316,7 @@ onBeforeUnmount(() => {
 .rule-chip { flex: 0 0 auto; padding: 2px 5px; border: 1px solid rgba(240, 68, 56, 0.25); border-radius: 4px; color: #f47c74; font-size: 10px; }
 .alert-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 10px; }
 .alert-status { font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.alert-empty-hint { padding: 12px 0 4px; color: var(--text-3); font-size: 11px; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
 .activity-card { display: flex; flex-direction: column; min-height: 430px; padding: 16px 18px; }
