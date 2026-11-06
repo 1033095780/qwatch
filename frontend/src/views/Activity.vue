@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Activity.vue — 动态中心：左侧全局事件流，右侧活跃/历史告警。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { NButton, NInput, NSelect, useMessage } from 'naive-ui';
 import { Check, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
@@ -12,6 +12,7 @@ import { fmtTime, fromNow } from '@/utils/format';
 import { ruleLabel } from '@/utils/catalog';
 
 const router = useRouter();
+const route = useRoute();
 const message = useMessage();
 const realtime = useRealtimeStore();
 const settings = useSettingsStore();
@@ -25,7 +26,7 @@ const feedError = ref('');
 const keyword = ref('');
 const typeFilter = ref<'all' | 'message' | 'signal'>('all');
 const accountFilter = ref('all');
-const strategyFilter = ref('all');
+const strategyFilter = ref(typeof route.query.runner_id === 'string' ? route.query.runner_id : 'all');
 const daysFilter = ref(7);
 const accounts = ref<Account[]>([]);
 const runners = ref<Runner[]>([]);
@@ -148,6 +149,7 @@ async function refreshLatest(): Promise<void> {
       limit: 50,
       type: typeFilter.value === 'all' ? undefined : typeFilter.value,
       account_id: accountFilter.value === 'all' ? undefined : accountFilter.value,
+      runner_id: strategyFilter.value === 'all' ? undefined : strategyFilter.value,
       q: keyword.value.trim() || undefined,
       days: daysFilter.value || undefined,
     });

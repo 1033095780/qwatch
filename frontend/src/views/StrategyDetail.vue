@@ -54,6 +54,10 @@ const processes = computed(() => detail.value?.processes ?? []);
 const events = computed(() => detail.value?.events ?? []);
 const alerts = computed(() => detail.value?.alerts ?? []);
 const firingAlerts = computed(() => alerts.value.filter((alert) => alert.status === 'firing'));
+const alertTab = ref<'active' | 'history'>('active');
+const activeAlerts = computed(() => alerts.value.filter((alert) => alert.status !== 'resolved'));
+const historyAlerts = computed(() => alerts.value.filter((alert) => alert.status === 'resolved'));
+const currentAlerts = computed(() => (alertTab.value === 'active' ? activeAlerts.value : historyAlerts.value));
 const filteredEvents = computed<RunnerEvent[]>(() => {
   const keyword = eventQuery.value.trim().toLowerCase();
   return events.value.filter((event) => {
@@ -245,17 +249,23 @@ onBeforeUnmount(() => {
 
           <section class="card block-card">
             <div class="block-head">
-              <div><h3>最近告警</h3><span class="block-sub">{{ alerts.length }} 条</span></div>
-              <router-link to="/activity" class="inline-link">告警中心</router-link>
+              <div><h3>告警</h3><span class="block-sub">{{ activeAlerts.length }} 活跃 · {{ historyAlerts.length }} 历史</span></div>
+              <router-link :to="{ path: '/activity', query: { runner_id: route.params.id } }" class="inline-link">告警中心</router-link>
             </div>
-            <template v-if="alerts.length">
-              <router-link v-for="alert in alerts.slice(0, 4)" :key="alert.id" to="/activity" class="alert-line">
-                <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
-                <span class="alert-text">{{ alert.summary }}</span>
-                <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
-              </router-link>
-            </template>
-            <div v-else class="alert-empty-hint">暂无告警 · 策略心跳与 loop 正常</div>
+            <div class="alert-tabs">
+              <button type="button" :class="{ active: alertTab === 'active' }" @click="alertTab = 'active'">最近 <b>{{ activeAlerts.length }}</b></button>
+              <button type="button" :class="{ active: alertTab === 'history' }" @click="alertTab = 'history'">历史 <b>{{ historyAlerts.length }}</b></button>
+            </div>
+            <div class="alert-scroll">
+              <template v-if="currentAlerts.length">
+                <router-link v-for="alert in currentAlerts" :key="alert.id" to="/activity" class="alert-line">
+                  <span class="rule-chip">{{ ruleLabel(alert.rule) }}</span>
+                  <span class="alert-text">{{ alert.summary }}</span>
+                  <span class="alert-status" :class="alert.status">{{ alertStatusText(alert) }}</span>
+                </router-link>
+              </template>
+              <div v-else class="alert-empty-hint">{{ alertTab === 'active' ? '当前没有活跃告警 · 策略心跳与 loop 正常' : '暂无历史告警' }}</div>
+            </div>
           </section>
         </div>
 
@@ -316,6 +326,11 @@ onBeforeUnmount(() => {
 .rule-chip { flex: 0 0 auto; padding: 2px 5px; border: 1px solid rgba(240, 68, 56, 0.25); border-radius: 4px; color: #f47c74; font-size: 10px; }
 .alert-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 10px; }
 .alert-status { font-size: 10px; color: var(--text-3); white-space: nowrap; }
+.alert-tabs { display: flex; gap: 2px; margin: -2px 0 4px; }
+.alert-tabs button { height: 24px; padding: 0 9px; border: 0; border-radius: 5px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
+.alert-tabs button b { margin-left: 3px; color: var(--text-2); font: 9px var(--font-mono); font-weight: 500; }
+.alert-tabs button.active { background: var(--primary-soft); color: var(--text); }
+.alert-scroll { max-height: 190px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .alert-empty-hint { padding: 12px 0 4px; color: var(--text-3); font-size: 11px; }
 .live-hint { display: inline-flex; align-items: center; gap: 5px; color: var(--text-3); font-size: 10px; }
 .live-hint.live { color: var(--down); }
