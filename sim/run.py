@@ -6,7 +6,7 @@
     python -m sim.run
 
 环境变量：
-    QWATCH_URL           后端地址，默认 http://127.0.0.1:8080
+    QWATCH_URL           后端地址，默认 http://127.0.0.1:13337
     QWATCH_PASSWORD      登录密码，默认 qwatch
     QWATCH_SIM_LOG_DIR   SDK 日志目录，默认仓库根 logs/（自测时可指向临时目录）
 
@@ -37,7 +37,7 @@ if str(SDK_PATH) not in sys.path:
 
 from qwatch import Qwatch  # noqa: E402
 
-DEFAULT_URL = "http://127.0.0.1:8080"
+DEFAULT_URL = "http://127.0.0.1:13337"
 DEFAULT_PASSWORD = "qwatch"
 TOKENS_PATH = ROOT / "data" / "sim_tokens.json"
 LOG_DIR = Path(os.environ.get("QWATCH_SIM_LOG_DIR", str(ROOT / "logs")))

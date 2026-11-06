@@ -5,7 +5,7 @@ import time
 
 from qwatch import Qwatch
 
-URL = os.environ.get("QWATCH_URL", "http://127.0.0.1:8080")
+URL = os.environ.get("QWATCH_URL", "http://127.0.0.1:13337")
 TOKEN = os.environ.get("QWATCH_TOKEN", "")
 INSTRUMENT = os.environ.get("QWATCH_INSTRUMENT", "rb")       # 稳定进程名
 CONTRACT = os.environ.get("QWATCH_CONTRACT", "rb2601")       # 当前合约

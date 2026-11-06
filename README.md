@@ -44,7 +44,7 @@ python -m backend.seed
 python -m backend
 ```
 
-打开 `http://127.0.0.1:8080`，默认密码 `qwatch`。
+打开 `http://127.0.0.1:13337`，首次启动会进入「初始化密码」界面，设置至少 10 位密码后进入。
 
 1. 「策略」→ 新建策略
 2. 账户可下拉已有，也可直接输入新账户名（自动创建）
@@ -60,7 +60,7 @@ python -m pip install -e sdk/python
 import time
 from qwatch import Qwatch
 
-q = Qwatch("http://127.0.0.1:8080", token="qw_xxx", instrument="rb", log_dir="logs")
+q = Qwatch("http://127.0.0.1:13337", token="qw_xxx", instrument="rb", log_dir="logs")
 while True:
     q.tick()
     q.msg("夜盘正常")
@@ -77,6 +77,22 @@ SDK v0.6 生产安全：
 - 有界队列，满时丢最旧；每 instrument 独立日志 5MB×3，不记 token
 - 401 标记 `auth_failed`，不影响调用方
 - `close(flush_timeout)` 有上限；`stats/last_error` 可观测
+
+## 单行 SDK（无法 pip 安装的环境）
+
+如果目标机器不能安装包，直接复制 [sdk/python/qwatch/oneline.py](sdk/python/qwatch/oneline.py) 中的**一整行**源码粘贴执行即可。
+
+- 只用 Python 标准库
+- 仍然后台线程、非阻塞入队
+- 支持 `tick / msg / signal / equity / close`
+- 单行代码约 1.3KB
+
+```python
+# 粘贴 oneline.py 的整行后：
+q = Qwatch("http://127.0.0.1:13337", "qw_xxx", instrument="rb")
+q.tick(); q.msg("hello")
+q.close()
+```
 
 ## 权益口径
 
@@ -168,3 +184,5 @@ Apache-2.0
 ## 设计规范
 
 - [字体与排版规范](docs/UI-TYPOGRAPHY.md)
+
+- [安全说明](SECURITY.md)

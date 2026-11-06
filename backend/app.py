@@ -25,6 +25,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -37,7 +38,8 @@ from .db import DB_PATH, SCHEMA_VERSION, connect, dumps, get_setting, init_db, i
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "frontend" / "dist"
 VERSION = "0.6.0"
-PASSWORD = os.environ.get("QWATCH_PASSWORD", "qwatch")
+PASSWORD = os.environ.get("QWATCH_PASSWORD", "").strip()
+PASSWORD_MIN_LEN = 10
 SESSION_HOURS = 12
 HEARTBEAT_TIMEOUT_S = 60
 STALL_REPEAT = 3
@@ -45,6 +47,7 @@ WATCHDOG_INTERVAL_S = 5
 # 后端重启后给策略进程一个重连窗口，避免启动瞬间把昨天的心跳判死并发送 P0
 STARTUP_GRACE_S = 90
 MAX_EVENTS_RETURN = 100
+SETUP_LOCK = threading.Lock()
 
 logging.basicConfig(
     level=os.environ.get("QWATCH_LOG_LEVEL", "INFO"),
@@ -52,14 +55,36 @@ logging.basicConfig(
 )
 logger = logging.getLogger("qwatch")
 
-app = FastAPI(title="qwatch", version=VERSION)
+app = FastAPI(
+    title="qwatch", version=VERSION,
+    docs_url=None, redoc_url=None, openapi_url=None,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://127.0.0.1:8080"],
+    allow_origins=[
+        "http://127.0.0.1:5173", "http://localhost:5173",
+        "http://127.0.0.1:13337", "http://localhost:13337",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src \'self\'; script-src \'self\'; style-src \'self\' \'unsafe-inline\'; "
+        "img-src \'self\' data:; font-src \'self\' data:; connect-src \'self\'; "
+        "object-src \'none\'; base-uri \'self\'; frame-ancestors \'none\'"
+    )
+    return response
 init_db()
 
 LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
@@ -138,6 +163,34 @@ def _session_user(token: str) -> str:
     if not row or row["expires_at"] <= iso_now():
         raise HTTPException(status_code=401, detail="未登录或登录已过期")
     return row["user"]
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), 310000).hex()
+    return "pbkdf2_sha256$310000$" + salt + "$" + digest
+
+
+def _verify_password(password: str) -> bool:
+    if PASSWORD:
+        return hmac.compare_digest(password, PASSWORD)
+    with connect() as conn:
+        stored = get_setting(conn, "password_hash", "")
+    if not stored:
+        return False
+    try:
+        _, iterations, salt, expected = stored.split("$", 3)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("ascii"), int(iterations)).hex()
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(digest, expected)
+
+
+def _setup_required() -> bool:
+    if PASSWORD:
+        return False
+    with connect() as conn:
+        return not bool(get_setting(conn, "password_hash", ""))
 
 
 def require_user(authorization: str | None = Header(default=None)) -> str:
@@ -681,12 +734,44 @@ def healthz() -> dict[str, Any]:
 
 # ---------- 路由：鉴权 ----------
 
+@app.get("/api/v1/auth/status")
+def auth_status() -> dict[str, Any]:
+    return {"setup_required": _setup_required(), "min_password_length": PASSWORD_MIN_LEN}
+
+
+def _issue_session() -> dict[str, Any]:
+    token = secrets.token_urlsafe(32)
+    expires = (now_dt() + timedelta(hours=SESSION_HOURS)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    with connect() as conn:
+        _purge_expired_sessions(conn)
+        conn.execute("INSERT INTO sessions(token_hash,user,expires_at) VALUES(?,?,?)", (token_hash(token), "Trader", expires))
+    return {"token": token, "user": {"name": "Trader", "role": "owner"}}
+
+
+@app.post("/api/v1/auth/setup")
+def setup(payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    password = str(payload.get("password", ""))
+    if len(password) < PASSWORD_MIN_LEN:
+        raise HTTPException(status_code=400, detail="密码至少 " + str(PASSWORD_MIN_LEN) + " 位")
+    if len(password) > 128:
+        raise HTTPException(status_code=400, detail="密码过长")
+    with SETUP_LOCK:
+        if not _setup_required():
+            raise HTTPException(status_code=409, detail="系统已经完成初始化")
+        with connect() as conn:
+            set_setting(conn, "password_hash", _hash_password(password))
+    logger.info("首次部署初始化完成")
+    return _issue_session()
+
+
 @app.post("/api/v1/auth/login")
 def login(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[str, Any]:
+    if _setup_required():
+        raise HTTPException(status_code=428, detail="首次部署，请先设置访问密码")
     client_ip = request.client.host if request.client else "local"
     current = time.monotonic()
     password = str(payload.get("password", ""))
-    correct = hmac.compare_digest(password, PASSWORD)
+    correct = _verify_password(password)
     with LOGIN_LOCK:
         attempts = LOGIN_ATTEMPTS[client_ip]
         while attempts and current - attempts[0] > 60:
@@ -698,13 +783,8 @@ def login(request: Request, payload: dict[str, Any] = Body(default={})) -> dict[
             if len(attempts) >= 5:
                 raise HTTPException(status_code=429, detail="登录尝试过多，请稍后再试")
             raise HTTPException(status_code=401, detail="密码错误")
-    token = secrets.token_urlsafe(32)
-    expires = (now_dt() + timedelta(hours=SESSION_HOURS)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    with connect() as conn:
-        _purge_expired_sessions(conn)
-        conn.execute("INSERT INTO sessions(token_hash,user,expires_at) VALUES(?,?,?)", (token_hash(token), "Trader", expires))
     logger.info("登录成功：ip=%s", client_ip)
-    return {"token": token, "user": {"name": "Trader", "role": "owner"}}
+    return _issue_session()
 
 
 @app.get("/api/v1/auth/me")
@@ -1496,6 +1576,11 @@ def save_settings(payload: dict[str, Any] = Body(default={}), user: str = Depend
             secret = str(patch.get("secret", row["secret"])).strip()
             if "****" in webhook:
                 raise HTTPException(status_code=400, detail="webhook 不能是掩码值，请填写完整地址")
+            parsed = urlparse(webhook)
+            if parsed.scheme != "https" or parsed.hostname != "oapi.dingtalk.com" or parsed.path != "/robot/send" or "access_token=" not in parsed.query:
+                raise HTTPException(status_code=400, detail="webhook 只允许钉钉机器人地址")
+            if len(secret) > 256:
+                raise HTTPException(status_code=400, detail="secret 过长")
             conn.execute("UPDATE channels SET enabled = ?, webhook = ?, secret = ? WHERE id = ?",
                          (enabled, webhook, secret, channel_id))
         channels_out = [channel_view(row) for row in conn.execute("SELECT * FROM channels ORDER BY rowid").fetchall()]

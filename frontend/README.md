@@ -6,7 +6,7 @@ Vue 3 + TypeScript + Vite + Naive UI + ECharts + Pinia + Vue Router。
 
 ~~~bash
 npm install
-npm run dev       # http://127.0.0.1:5173，/api 代理到 8080
+npm run dev       # http://127.0.0.1:5173，/api 代理到 13337
 npm run typecheck
 npm run build     # 产物 frontend/dist，由后端托管
 ~~~

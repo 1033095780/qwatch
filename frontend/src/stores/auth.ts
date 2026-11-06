@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 import { api, tokenStorage } from '@/api/client';
-import type { User } from '@/api/types';
+import type { AuthStatus, User } from '@/api/types';
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(tokenStorage.get());
@@ -10,6 +10,32 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false);
   const error = ref('');
   const isAuthenticated = computed(() => !!token.value);
+  const setupRequired = ref(false);
+  const authStatus = ref<AuthStatus | null>(null);
+
+  async function checkStatus(): Promise<AuthStatus> {
+    const res = await api.authStatus();
+    authStatus.value = res;
+    setupRequired.value = res.setup_required;
+    return res;
+  }
+
+  async function setup(password: string): Promise<void> {
+    loading.value = true;
+    error.value = '';
+    try {
+      const res = await api.setup(password);
+      tokenStorage.set(res.token, true);
+      token.value = res.token;
+      user.value = res.user;
+      setupRequired.value = false;
+    } catch (err) {
+      error.value = err instanceof Error ? err.message : '初始化失败';
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  }
 
   async function login(password: string, remember = true): Promise<void> {
     loading.value = true;
@@ -52,5 +78,8 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null;
   }
 
-  return { token, user, loading, error, isAuthenticated, login, fetchMe, logout };
+  return {
+    token, user, loading, error, isAuthenticated, setupRequired, authStatus,
+    checkStatus, setup, login, fetchMe, logout,
+  };
 });

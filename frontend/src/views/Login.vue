@@ -14,11 +14,20 @@ const auth = useAuthStore();
 const message = useMessage();
 
 const password = ref('');
+const confirmPassword = ref('');
 const remember = ref(true);
 const errorText = ref('');
+const setupMode = ref(false);
 const passwordRef = ref<InputInst | null>(null);
+const minPasswordLength = computed(() => auth.authStatus?.min_password_length || 10);
 
-onMounted(() => {
+onMounted(async () => {
+  try {
+    const status = await auth.checkStatus();
+    setupMode.value = status.setup_required;
+  } catch {
+    setupMode.value = false;
+  }
   passwordRef.value?.focus();
 });
 
@@ -30,7 +39,25 @@ const nextPath = computed(() => {
 async function submit(): Promise<void> {
   errorText.value = '';
   if (!password.value) {
-    errorText.value = '请输入访问密码';
+    errorText.value = setupMode.value ? '请设置访问密码' : '请输入访问密码';
+    return;
+  }
+  if (setupMode.value) {
+    if (password.value.length < minPasswordLength.value) {
+      errorText.value = '密码至少 ' + minPasswordLength.value + ' 位';
+      return;
+    }
+    if (password.value !== confirmPassword.value) {
+      errorText.value = '两次输入的密码不一致';
+      return;
+    }
+    try {
+      await auth.setup(password.value);
+      message.success('访问密码已设置');
+      await router.replace(nextPath.value);
+    } catch (err) {
+      errorText.value = err instanceof Error ? err.message : '初始化失败';
+    }
     return;
   }
   try {
@@ -59,10 +86,10 @@ async function submit(): Promise<void> {
       <section class="form-panel">
         <div class="form-card">
           <div class="mobile-brand"><BrandMark size="md" /></div>
-          <h2 class="form-title">登录</h2>
-          <p class="form-sub">使用访问密码进入工作台</p>
+          <h2 class="form-title">{{ setupMode ? '初始化 qwatch' : '登录' }}</h2>
+          <p class="form-sub">{{ setupMode ? '首次部署，请设置一个至少 ' + minPasswordLength + ' 位的访问密码' : '使用访问密码进入工作台' }}</p>
 
-          <label class="field-label" for="password">访问密码</label>
+          <label class="field-label" for="password">{{ setupMode ? '设置访问密码' : '访问密码' }}</label>
           <n-input
             id="password"
             ref="passwordRef"
@@ -71,13 +98,27 @@ async function submit(): Promise<void> {
             size="large"
             placeholder="输入访问密码"
             :show-password-on="'click'"
-            :input-props="{ autocomplete: 'current-password', 'aria-label': '访问密码' }"
+            :input-props="{ autocomplete: setupMode ? 'new-password' : 'current-password', 'aria-label': setupMode ? '设置访问密码' : '访问密码' }"
             @keyup.enter="submit"
           >
             <template #prefix><LockKeyhole :size="15" /></template>
           </n-input>
 
-          <div class="form-row">
+          <template v-if="setupMode">
+            <label class="field-label" for="confirm-password">确认密码</label>
+            <n-input
+              id="confirm-password"
+              v-model:value="confirmPassword"
+              type="password"
+              size="large"
+              placeholder="再次输入密码"
+              :show-password-on="'click'"
+              :input-props="{ autocomplete: 'new-password', 'aria-label': '确认密码' }"
+              @keyup.enter="submit"
+            />
+          </template>
+
+          <div v-if="!setupMode" class="form-row">
             <n-checkbox v-model:checked="remember">记住我</n-checkbox>
           </div>
 
@@ -86,7 +127,7 @@ async function submit(): Promise<void> {
           </div>
 
           <n-button type="primary" size="large" block :loading="auth.loading" class="submit" @click="submit">
-            进入面板
+            {{ setupMode ? '设置并进入' : '进入面板' }}
             <template #icon><ArrowRight :size="16" /></template>
           </n-button>
 

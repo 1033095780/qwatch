@@ -80,7 +80,7 @@ def _file_logger(path: Path) -> logging.Logger:
 class Qwatch:
     """一个策略进程一个实例。
 
-        q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", instrument="rb")  # 立即返回
+        q = Qwatch("http://127.0.0.1:13337", "qw_xxxxxxxx", instrument="rb")  # 立即返回
         q.tick()                                    # 主循环每轮调用，只更新 loop
         q.msg("夜盘暂停")                            # 动态消息
         q.signal("rb2601", "long", "open", 2, price=3521)  # 交易信号

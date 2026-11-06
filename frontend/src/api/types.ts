@@ -15,6 +15,11 @@ export interface User {
   role: string;
 }
 
+export interface AuthStatus {
+  setup_required: boolean;
+  min_password_length?: number;
+}
+
 export interface LoginResponse {
   token: string;
   user: User;

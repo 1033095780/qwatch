@@ -22,7 +22,7 @@ from qwatch import Qwatch
 
 # instrument 是稳定进程名（如 rb / ag / IF），不是合约；换月不换名。
 # 构造立即返回，不做同步网络请求；参数错误才抛 ValueError。
-q = Qwatch("http://127.0.0.1:8080", "qw_xxxxxxxx", instrument="rb")
+q = Qwatch("http://127.0.0.1:13337", "qw_xxxxxxxx", instrument="rb")
 
 for i in range(1, 100000):
     q.tick()                                       # 主循环每轮调用，心跳携带 loop
@@ -77,7 +77,7 @@ q.close(flush_timeout=2.0)              # 停止 worker 并在上限内尽力冲
 日志示例：
 
 ```
-2026-11-04 18:30:00 INFO event=init instrument=rb heartbeat=30 timeout=5 queue_size=1000 url=http://127.0.0.1:8080 log=logs/rb.log
+2026-11-04 18:30:00 INFO event=init instrument=rb heartbeat=30 timeout=5 queue_size=1000 url=http://127.0.0.1:13337 log=logs/rb.log
 2026-11-04 18:30:00 INFO instrument=rb action=heartbeat status=200 ok=True latency_ms=2.4 attempt=1 id=- error=
 2026-11-04 18:30:10 INFO instrument=rb action=equity status=200 ok=True latency_ms=2.1 attempt=1 id=- error=
 ```
@@ -88,3 +88,11 @@ q.close(flush_timeout=2.0)              # 停止 worker 并在上限内尽力冲
 - 纯心跳也必须带 instrument（SDK 自动补齐）。
 - 信号字段：`contract + direction + action + qty` 必填，price/amount 可选且不能为负。
 - v0.6 后端按策略汇总：`equity` 写入 token 对应策略，账户权益=账户下策略权益之和。
+
+## 单行版本（无 pip）
+
+复制 `qwatch/oneline.py` 的整行到 Python 中直接执行，然后用 `Qwatch(...)`。
+
+- 无第三方依赖
+- 后台线程、非阻塞入队
+- 支持 tick/msg/signal/equity/close
