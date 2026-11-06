@@ -54,7 +54,7 @@ function goDetail(): void {
 
     <footer class="card-foot">
       <div class="process-line">
-        <span class="proc-meta">{{ runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
+        <span class="proc-meta">{{ runner.process_count === 0 ? '无活跃进程' : runner.process_count > 1 ? runner.process_count + ' 个进程' : '单进程' }}</span>
         <span v-if="runner.uptime_7d !== null && runner.uptime_7d !== undefined" class="uptime-meta">7d {{ fmtNumber(runner.uptime_7d, 2) }}%</span>
         <span v-if="runner.status === 'paused'" class="paused-label">已暂停监控</span>
       </div>

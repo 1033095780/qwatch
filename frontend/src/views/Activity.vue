@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router';
 import { NButton, NInput, NSelect, useMessage } from 'naive-ui';
 import { Check, Search } from 'lucide-vue-next';
 import { api } from '@/api/client';
-import type { Account, ActivityEvent, Alert } from '@/api/types';
+import type { Account, ActivityEvent, Alert, Runner } from '@/api/types';
 import { useRealtimeStore } from '@/stores/realtime';
 import { useSettingsStore } from '@/stores/settings';
 import { fmtTime, fromNow } from '@/utils/format';
@@ -25,8 +25,10 @@ const feedError = ref('');
 const keyword = ref('');
 const typeFilter = ref<'all' | 'message' | 'signal'>('all');
 const accountFilter = ref('all');
+const strategyFilter = ref('all');
 const daysFilter = ref(7);
 const accounts = ref<Account[]>([]);
+const runners = ref<Runner[]>([]);
 
 const activeAlerts = ref<Alert[]>([]);
 const historyAlerts = ref<Alert[]>([]);
@@ -53,6 +55,10 @@ const rangeOptions = [
 const accountOptions = computed(() => [
   { label: '全部账户', value: 'all' },
   ...accounts.value.map((a) => ({ label: a.name, value: a.id })),
+]);
+const strategyOptions = computed(() => [
+  { label: '全部策略', value: 'all' },
+  ...runners.value.map((r) => ({ label: r.name + (r.account_name ? ' · ' + r.account_name : ''), value: r.id })),
 ]);
 const currentAlerts = computed(() => (alertTab.value === 'active' ? activeAlerts.value : historyAlerts.value));
 const eventCount = computed(() => events.value.length);
@@ -94,7 +100,14 @@ function eventText(event: ActivityEvent): string {
 }
 
 async function loadAccounts(): Promise<void> {
-  try { accounts.value = (await api.accounts()).items; } catch { accounts.value = []; }
+  try {
+    const [accountRes, runnerRes] = await Promise.all([api.accounts(), api.runners()]);
+    accounts.value = accountRes.items;
+    runners.value = runnerRes.items;
+  } catch {
+    accounts.value = [];
+    runners.value = [];
+  }
 }
 
 async function loadEvents(reset = true): Promise<void> {
@@ -114,6 +127,7 @@ async function loadEvents(reset = true): Promise<void> {
       before_id: reset ? null : nextBefore.value,
       type: typeFilter.value === 'all' ? undefined : typeFilter.value,
       account_id: accountFilter.value === 'all' ? undefined : accountFilter.value,
+      runner_id: strategyFilter.value === 'all' ? undefined : strategyFilter.value,
       q: keyword.value.trim() || undefined,
       days: daysFilter.value || undefined,
     });
@@ -196,7 +210,7 @@ function scheduleAlertRefresh(): void {
   alertTimer = window.setTimeout(() => { void loadAlerts(); }, 350);
 }
 
-watch(() => [typeFilter.value, accountFilter.value, daysFilter.value], () => { void loadEvents(true); });
+watch(() => [typeFilter.value, accountFilter.value, strategyFilter.value, daysFilter.value], () => { void loadEvents(true); });
 watch(keyword, scheduleFilter);
 watch(() => settings.refreshSeq, () => {
   if (events.value.length) void refreshLatest();
@@ -226,6 +240,7 @@ onBeforeUnmount(() => {
       </n-input>
       <n-select v-model:value="typeFilter" :options="typeOptions" size="small" class="type-select" />
       <n-select v-model:value="accountFilter" :options="accountOptions" size="small" class="account-select" />
+      <n-select v-model:value="strategyFilter" :options="strategyOptions" size="small" class="strategy-select" />
       <n-select v-model:value="daysFilter" :options="rangeOptions" size="small" class="range-select" />
       <div class="toolbar-tail">
         <span class="count mono">{{ eventCount }} 条</span>
@@ -278,17 +293,15 @@ onBeforeUnmount(() => {
           </div>
           <template v-else>
             <article v-for="alert in currentAlerts" :key="alert.id" class="alert-card" :class="alert.status">
-            <div class="alert-top"><span class="rule">{{ ruleLabel(alert.rule) }}</span><span class="status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span></div>
-            <strong class="alert-runner">{{ alert.runner_name }}</strong>
-            <p class="alert-summary">{{ alert.summary }}</p>
-            <div class="alert-foot">
-              <span>{{ fromNow(alert.starts_at) }}</span>
-              <n-button v-if="alert.status === 'firing'" text size="tiny" :loading="acking === alert.id" @click="ackAlert(alert)">
-                <template #icon><Check :size="12" /></template>
-                确认
-              </n-button>
-              <span v-else class="alert-state">{{ alert.status === 'resolved' ? '已恢复' : '已确认' }}</span>
-            </div>
+              <div class="alert-row">
+                <span class="rule">{{ ruleLabel(alert.rule) }}</span>
+                <span class="alert-summary" :title="alert.summary">{{ alert.summary }}</span>
+                <span class="status">{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</span>
+                <span class="alert-time">{{ fromNow(alert.starts_at) }}</span>
+                <n-button v-if="alert.status === 'firing'" text size="tiny" :loading="acking === alert.id" @click="ackAlert(alert)">
+                  <template #icon><Check :size="12" /></template>
+                </n-button>
+              </div>
             </article>
           </template>
         </div>
@@ -302,7 +315,8 @@ onBeforeUnmount(() => {
 .activity-toolbar { flex: none; display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
 .activity-search { width: 320px; max-width: 34vw; }
 .type-select { width: 120px; }
-.account-select { width: 150px; }
+.account-select { width: 140px; }
+.strategy-select { width: 190px; }
 .range-select { width: 110px; }
 .toolbar-tail { display: flex; align-items: center; gap: 10px; margin-left: auto; }
 .count { color: var(--text-3); font-size: 11px; }
@@ -339,18 +353,17 @@ onBeforeUnmount(() => {
 .alert-tabs button b { margin-left: 3px; color: var(--text-2); font: 10px var(--font-mono); font-weight: 500; }
 .alert-tabs button.active { background: var(--primary-soft); color: var(--text); }
 .alert-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 12px 12px; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
-.alert-card { margin-top: 10px; padding: 11px 12px; border: 1px solid var(--border); border-left: 2px solid #f25c5c; border-radius: 8px; background: rgba(21,28,44,.48); }
+.alert-card { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-left: 2px solid #f25c5c; border-radius: 8px; background: rgba(21,28,44,.48); }
 .alert-card.resolved { border-left-color: var(--down); }
 .alert-card.acknowledged { border-left-color: var(--warning); }
-.alert-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.rule { color: #f47c74; font-size: 10px; }
-.status { color: #f47c74; font-size: 9px; }
+.alert-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.rule { flex: none; color: #f47c74; font-size: 10px; }
+.alert-summary { flex: 1; min-width: 0; margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status { flex: none; color: #f47c74; font-size: 9px; }
 .alert-card.resolved .status { color: var(--down); }
 .alert-card.acknowledged .status { color: var(--warning); }
-.alert-runner { display: block; margin-top: 6px; color: var(--text); font-size: 12px; font-weight: 600; }
-.alert-summary { margin: 4px 0 0; color: var(--text-2); font-size: 11px; line-height: 1.45; }
-.alert-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: var(--text-3); font-size: 10px; }
-.alert-state { color: var(--text-3); font-size: 10px; }
+.alert-time { flex: none; color: var(--text-3); font-size: 9px; }
+.alert-row :deep(.n-button) { flex: none; }
 .empty-alert { display: flex; align-items: flex-start; gap: 8px; padding: 34px 4px; }
 .empty-alert .ok { width: 6px; height: 6px; margin-top: 4px; border-radius: 50%; background: var(--down); box-shadow: 0 0 8px rgba(46,204,143,.5); }
 .empty-alert div { display: flex; flex-direction: column; gap: 3px; }
@@ -365,7 +378,7 @@ onBeforeUnmount(() => {
   .alert-panel { order: -1; height: 360px; }
 }
 @media (max-width: 760px) {
-  .type-select, .account-select, .range-select { flex: 1; min-width: 120px; }
+  .type-select, .account-select, .strategy-select, .range-select { flex: 1; min-width: 120px; }
   .feed-card { height: 560px; }
   .event-row { grid-template-columns: 52px 36px minmax(0, 1fr); gap: 8px; }
 }

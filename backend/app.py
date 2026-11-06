@@ -249,9 +249,9 @@ def _runner_state(runner, processes, statuses: dict[int, str]) -> dict[str, Any]
     online = sum(1 for p in active if statuses[p["id"]] == "running")
     last_seen_values = [p["last_seen"] for p in active if p["last_seen"]]
     last_seen = max(last_seen_values) if last_seen_values else None
-    if paused:
+    if paused or not active:
         status = "paused"
-    elif not active or online == 0:
+    elif online == 0:
         status = "offline"
     elif online < len(active):
         status = "degraded"

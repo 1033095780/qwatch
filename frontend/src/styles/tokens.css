@@ -48,7 +48,7 @@
   --topbar-h: 48px;
   --page-max: 1680px;
   --gap: 16px;
-  --pad-page: 24px;
+  --pad-page: 12px;
 }
 
 /* 涨跌配色可配置（settings store 在根节点上切换） */

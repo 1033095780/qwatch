@@ -24,6 +24,14 @@ const loading = ref(true);
 const error = ref('');
 const chartScope = ref<string>('all');
 const metric = ref<'equity' | 'profit'>('equity');
+const rangeKey = ref('all');
+const customStart = ref('');
+const customEnd = ref('');
+const rangeOptions = [
+  { value: 'all', label: '全部历史' }, { value: '1m', label: '近 1 个月' }, { value: '3m', label: '近 3 个月' },
+  { value: '6m', label: '近 6 个月' }, { value: '1y', label: '近 1 年' }, { value: '3y', label: '近 3 年' },
+  { value: '5y', label: '近 5 年' }, { value: 'custom', label: '自定义' },
+];
 const scopeCurve = ref<CurvePoint[]>([]);
 const curveLoading = ref(false);
 const curveCache = new Map<string, CurvePoint[]>();
@@ -73,9 +81,21 @@ const equityCurve = computed<CurvePoint[]>(() => {
   }
   const daily = [...byDay.values()];
   if (!daily.length) return [];
-  if (metric.value === 'equity') return daily;
-  const baseline = Number(daily[0].value) || 0;
-  return daily.map((point) => ({ ts: point.ts, value: String(Number(point.value) - baseline) }));
+  let filtered = daily;
+  if (rangeKey.value === 'custom') {
+    const start = customStart.value ? Date.parse(customStart.value) : -Infinity;
+    const end = customEnd.value ? Date.parse(customEnd.value) + 86399000 : Infinity;
+    filtered = daily.filter((point) => { const ts = Date.parse(point.ts); return ts >= start && ts <= end; });
+  } else if (rangeKey.value !== 'all') {
+    const latest = Date.parse(daily[daily.length - 1].ts);
+    const months = ({ '1m': 1, '3m': 3, '6m': 6, '1y': 12, '3y': 36, '5y': 60 } as Record<string, number>)[rangeKey.value] || 0;
+    const cutoff = new Date(latest);
+    cutoff.setMonth(cutoff.getMonth() - months);
+    filtered = daily.filter((point) => Date.parse(point.ts) >= cutoff.getTime());
+  }
+  if (metric.value === 'equity') return filtered;
+  const baseline = Number(filtered[0]?.value) || 0;
+  return filtered.map((point) => ({ ts: point.ts, value: String(Number(point.value) - baseline) }));
 });
 const metricLabel = computed(() => metric.value === 'equity' ? '权益' : '盈利额');
 const recentEvents = computed<RunnerEvent[]>(() => {
@@ -200,12 +220,19 @@ onBeforeUnmount(() => {
         <SectionCard :title="metric === 'equity' ? '权益曲线' : '盈利额曲线'">
           <template #extra>
             <div class="chart-tools">
-              <span class="chart-granularity">全部历史 · 日粒度</span>
+              <span class="chart-granularity">日粒度</span>
               <select :value="chartScope" class="chart-select" aria-label="选择账户或策略" @change="selectScope(($event.target as HTMLSelectElement).value)">
                 <optgroup v-for="group in chartGroups" :key="group.label" :label="group.label">
                   <option v-for="option in group.options" :key="option.value" :value="option.value">{{ option.label }}</option>
                 </optgroup>
               </select>
+              <select v-model="rangeKey" class="range-select" aria-label="选择时间范围">
+                <option v-for="item in rangeOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
+              </select>
+              <template v-if="rangeKey === 'custom'">
+                <input v-model="customStart" type="date" class="date-input" aria-label="开始日期" />
+                <input v-model="customEnd" type="date" class="date-input" aria-label="结束日期" />
+              </template>
               <div class="metric-tabs">
                 <button type="button" :class="{ active: metric === 'equity' }" @click="metric = 'equity'">权益</button>
                 <button type="button" :class="{ active: metric === 'profit' }" @click="metric = 'profit'">盈利额</button>
@@ -242,7 +269,7 @@ onBeforeUnmount(() => {
           <div v-if="recentAlerts.length" class="ov-alert-scroll">
             <router-link v-for="alert in recentAlerts" :key="alert.id" to="/activity" class="ov-alert">
               <span class="ov-alert-dot" :class="alert.status" />
-              <div><strong>{{ alert.runner_name }}</strong><span>{{ alert.summary }}</span></div>
+              <span class="ov-alert-text">{{ alert.summary }}</span>
               <em>{{ alert.status === 'firing' ? '触发中' : alert.status === 'acknowledged' ? '已确认' : '已恢复' }}</em>
             </router-link>
           </div>
@@ -254,7 +281,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.overview-page { height: 100%; min-height: 0; overflow: hidden; gap: 14px; }
+.overview-page { height: 100%; min-height: 0; overflow: hidden; gap: 12px; }
 .overview-page > .summary-grid { flex: none; height: 96px; }
 .skeleton-page { display: flex; flex-direction: column; gap: var(--gap); }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--gap); }
@@ -280,6 +307,8 @@ onBeforeUnmount(() => {
 
 .chart-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .chart-granularity { color: var(--text-3); font-size: 10px; white-space: nowrap; }
+.range-select { height: 27px; padding: 0 22px 0 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 10px; }
+.date-input { height: 27px; padding: 0 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-2); font-size: 9px; }
 .metric-tabs { display: inline-flex; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
 .metric-tabs button { height: 23px; padding: 0 9px; border: 0; border-radius: 4px; background: transparent; color: var(--text-3); font-size: 10px; cursor: pointer; }
 .metric-tabs button.active { background: var(--primary-soft); color: var(--text); }
@@ -297,7 +326,7 @@ onBeforeUnmount(() => {
 .link-more { display: inline-flex; align-items: center; gap: 1px; color: var(--text-3); font-size: 10px; }
 .link-more:hover { color: var(--text-2); }
 
-.overview-lower { flex: none; height: clamp(120px, 18vh, 230px); display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--gap); min-height: 0; }
+.overview-lower { flex: none; height: clamp(128px, 19vh, 240px); display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(280px, 1fr); gap: var(--gap); min-height: 0; }
 .overview-lower > :deep(.section-card) { height: 100%; min-height: 0; }
 .ov-activity-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
 .ov-activity-scroll::-webkit-scrollbar { width: 5px; }
@@ -311,6 +340,7 @@ onBeforeUnmount(() => {
 .ov-event-text { color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-event time { color: var(--text-3); font: 10px var(--font-mono); white-space: nowrap; }
 .ov-alert-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2b3a55 transparent; }
+.ov-alert-text { min-width: 0; flex: 1; color: var(--text-2); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ov-alert { display: grid; grid-template-columns: 5px minmax(0, 1fr) auto; gap: 8px; align-items: start; padding: 6px 0; border-bottom: 1px solid rgba(125, 139, 161, 0.09); color: inherit; }
 .ov-alert:last-child { border-bottom: 0; }
 .ov-alert-dot { width: 5px; height: 5px; margin-top: 4px; border-radius: 50%; background: #f25c5c; }
@@ -340,9 +370,11 @@ onBeforeUnmount(() => {
 }
 @media (max-width: 1100px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .overview-page > .summary-grid { height: auto; }
   .overview-page { height: auto; overflow: visible; }
   .overview-main { flex: none; min-height: 560px; grid-template-columns: minmax(0, 1fr); }
   .overview-main > :deep(.section-card) { height: auto; }
+  .overview-main > :deep(.section-card:first-child) { height: 420px; }
   .strategy-column { max-height: 560px; }
   .overview-lower { height: 180px; grid-template-columns: 1fr; }
 }
