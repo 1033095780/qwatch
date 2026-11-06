@@ -624,7 +624,13 @@ def _ensure_process(conn, runner, name: str, at: datetime):
     now = iso_now()
     row = conn.execute("SELECT * FROM processes WHERE runner_id = ? AND name = ?", (runner["id"], name)).fetchone()
     if row:
-        conn.execute("UPDATE processes SET last_seen = ?, updated_at = ? WHERE id = ?", (now, now, row["id"]))
+        previous = dt_from(row["last_seen"])
+        reconnected = previous is None or (at - previous).total_seconds() > HEARTBEAT_TIMEOUT_S
+        # 断线重连后 loop 连续性必须重新计数，不能被断线前的 loop_same 带偏。
+        conn.execute(
+            "UPDATE processes SET last_seen = ?, loop_same = CASE WHEN ? THEN 0 ELSE loop_same END, updated_at = ? WHERE id = ?",
+            (now, 1 if reconnected else 0, now, row["id"]),
+        )
         return conn.execute("SELECT * FROM processes WHERE id = ?", (row["id"],)).fetchone()
     count = conn.execute("SELECT COUNT(*) AS n FROM processes WHERE runner_id = ?", (runner["id"],)).fetchone()["n"]
     if count >= MAX_PROCESSES_PER_RUNNER:
@@ -1213,16 +1219,14 @@ def report(payload: dict[str, Any] = Body(default={}), authorization: str | None
     if not instrument:
         raise HTTPException(status_code=400, detail="instrument 必填（进程名）")
 
-    # 1) 心跳先独立提交：任何鉴权成功的 report 都刷新该进程 last_seen（即使后续字段 400）
+    # 1) 心跳先独立提交：任何鉴权成功的 report 都刷新该进程 last_seen（即使后续字段 400）。
+    # 这里不刷新告警状态，必须等 loop 字段落库后再统一判定，否则重连首包会用断线前的
+    # loop_same 误报“连续三次未增长”。
     with connect() as conn:
         now = iso_now()
         conn.execute("UPDATE tokens SET last_used_at = ?, request_count = request_count + 1 WHERE id = ?",
                      (now, token["id"]))
-        process = _ensure_process(conn, runner, instrument, now_dt())
-        state = refresh_runner_state(conn, runner["id"], publish=True)
-        if state:
-            _publish_process(conn, runner, conn.execute("SELECT * FROM processes WHERE id = ?",
-                                                        (process["id"],)).fetchone(), state)
+        _ensure_process(conn, runner, instrument, now_dt())
 
     # 2) 拒绝 v0.1 财务字段
     forbidden = sorted(key for key in ("pnl", "cash_flow", "nav", "account_nav") if key in payload)
