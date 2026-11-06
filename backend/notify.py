@@ -14,7 +14,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from urllib.parse import urlparse
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from .db import connect, iso_now, loads
 
@@ -77,6 +77,63 @@ def deliver_sync(webhook: str, secret: str, text: str, timeout: float = 6.0) -> 
     return True, ""
 
 
+LOCAL_TZ = timezone(timedelta(hours=8))  # 固定东八区，避免 Windows 缺少 tzdata 时无法启动
+
+
+def _fmt_local(value: str | None) -> str:
+    if not value:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError):
+        return "—"
+
+
+def _duration(start: str | None, end: str | None) -> str:
+    try:
+        a = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(end).replace("Z", "+00:00"))
+        seconds = max(0, int((b - a).total_seconds()))
+        hours, rem = divmod(seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours} 小时 {minutes} 分"
+        if minutes:
+            return f"{minutes} 分 {secs} 秒"
+        return f"{secs} 秒"
+    except (ValueError, TypeError):
+        return "—"
+
+
+def format_alert_message(row: dict, kind: str) -> str:
+    """钉钉消息必须自解释：时间、状态、策略、规则、详情。"""
+    is_recovery = kind == "recovery"
+    alert_status = str(row.get("alert_status") or ("resolved" if is_recovery else "firing"))
+    if is_recovery or alert_status == "resolved":
+        title = "【qwatch P0 已恢复】"
+        state = "已恢复，无需处理"
+        stamp = _fmt_local(row.get("ends_at") or row.get("alert_updated_at"))
+        time_label = "恢复时间"
+    else:
+        title = "【qwatch P0 故障告警】"
+        state = "已确认，故障仍未恢复" if alert_status == "acknowledged" else "故障未恢复，需要处理"
+        stamp = _fmt_local(row.get("starts_at"))
+        time_label = "告警时间"
+    lines = [
+        title,
+        f"{time_label}：{stamp}（Asia/Shanghai）",
+        f"状态：{state}",
+        f"策略：{row.get('runner_name') or '—'}",
+        f"规则：{row.get('rule') or '—'}",
+    ]
+    if is_recovery or alert_status == "resolved":
+        lines.append(f"故障开始：{_fmt_local(row.get('starts_at'))}")
+        lines.append(f"持续时间：{_duration(row.get('starts_at'), row.get('ends_at') or row.get('alert_updated_at'))}")
+    lines.append(f"详情：{row.get('summary') or '—'}")
+    return "\n".join(lines)
+
+
 def _next_attempt(attempts: int) -> str:
     delay = BACKOFF_SECONDS[min(attempts, len(BACKOFF_SECONDS) - 1)]
     return (iso_now_dt() + timedelta(seconds=delay)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -136,9 +193,12 @@ async def delivery_loop() -> None:
             with connect() as conn:
                 rows = conn.execute(
                     "SELECT d.*, c.webhook AS webhook, c.secret AS secret, c.name AS channel_name, "
-                    "a.summary AS summary, a.rule AS rule, a.status AS alert_status, a.labels AS alert_labels "
+                    "a.summary AS summary, a.rule AS rule, a.status AS alert_status, a.labels AS alert_labels, "
+                    "a.starts_at AS starts_at, a.ends_at AS ends_at, a.updated_at AS alert_updated_at, "
+                    "r.name AS runner_name "
                     "FROM alert_deliveries d "
                     "JOIN channels c ON c.id = d.channel_id JOIN alerts a ON a.id = d.alert_id "
+                    "LEFT JOIN runners r ON r.id = a.runner_id "
                     "WHERE d.status = 'pending' AND d.next_attempt_at <= ? AND c.enabled = 1 "
                     "ORDER BY d.id LIMIT 20",
                     (iso_now(),),
@@ -165,8 +225,8 @@ async def delivery_loop() -> None:
                             )
                         logger.info("投递静默延后：alert=%s until=%s", row["alert_id"], silenced_until)
                         continue
-                prefix = "【qwatch P0 告警】" if row["kind"] == "firing" else "【qwatch P0 恢复】"
-                ok, error = await asyncio.to_thread(deliver_sync, row["webhook"], row["secret"], prefix + row["summary"])
+                text = format_alert_message(row, row["kind"])
+                ok, error = await asyncio.to_thread(deliver_sync, row["webhook"], row["secret"], text)
                 with connect() as conn:
                     current = conn.execute("SELECT attempts, status FROM alert_deliveries WHERE id = ?", (row["id"],)).fetchone()
                     if current is None or current["status"] != "pending":
@@ -216,6 +276,12 @@ async def delivery_loop() -> None:
 
 def send_test(webhook: str, secret: str) -> tuple[bool, str, float]:
     started = time.perf_counter()
-    ok, error = deliver_sync(webhook, secret, "qwatch 测试消息：通知渠道联通正常")
+    text = "\n".join([
+        "【qwatch 测试消息】",
+        "时间：" + datetime.now(LOCAL_TZ).strftime("%Y-%m-%d %H:%M:%S") + "（Asia/Shanghai）",
+        "状态：通知渠道联通正常",
+        "详情：这是一条测试消息，无需处理。",
+    ])
+    ok, error = deliver_sync(webhook, secret, text)
     latency = round((time.perf_counter() - started) * 1000, 1)
     return ok, error, latency
